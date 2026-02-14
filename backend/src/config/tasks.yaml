@@ -1,0 +1,77 @@
+collect_news_task:
+  description: >
+    한국 주요 경제 매체(매일경제, 한국경제, 네이버 금융)에서 오늘의 경제/테크 관련 뉴스를 수집하세요.
+    최소 20개 이상의 기사를 수집하고, 각 기사의 제목, 본문 요약, URL, 게시 시간을 포함하세요.
+    투자에 직접 영향을 줄 수 있는 기사를 우선적으로 선별하세요.
+  expected_output: >
+    JSON 형식의 뉴스 기사 목록. 각 기사는 title, summary, url, source, published_at, relevance_score 필드를 포함.
+  agent: news_collector
+
+extract_keywords_task:
+  description: >
+    수집된 뉴스 기사들에서 투자 관련 키워드를 추출하세요.
+    기업명, 산업 키워드, 경제 지표, 정책 관련 단어를 추출하고,
+    각 키워드의 빈도, 중요도, 감성(긍정/부정/중립)을 평가하세요.
+    키워드는 한국어와 영어 모두 포함할 수 있습니다.
+  expected_output: >
+    JSON 형식의 키워드 목록. 각 키워드는 keyword, frequency, importance_score, sentiment(positive/negative/neutral), related_articles 필드를 포함.
+  agent: keyword_extractor
+
+screen_stocks_task:
+  description: >
+    추출된 키워드를 바탕으로 관련 종목을 스크리닝하세요.
+    한국(KOSPI/KOSDAQ) 및 미국(NYSE/NASDAQ) 시장에서 관련 종목을 매핑하고,
+    각 종목의 기본 정보(현재가, 시가총액, PER 등)를 조회하세요.
+    최종적으로 10~20개의 후보 종목을 선별하세요.
+  expected_output: >
+    JSON 형식의 후보 종목 목록. 각 종목은 ticker, name, market, current_price, market_cap, relevance_score, related_keywords 필드를 포함.
+  agent: stock_screener
+
+analyze_candlestick_task:
+  description: >
+    후보 종목의 최근 60일 OHLCV 데이터를 분석하여 캔들스틱 패턴을 식별하세요.
+    단일 캔들(해머, 도지, 마루보즈 등)과 복합 캔들(잉태형, 장악형, 별 등) 패턴을 모두 탐지하고,
+    각 패턴의 신뢰도와 매매 방향(BUY/SELL)을 평가하세요.
+  expected_output: >
+    JSON 형식의 캔들스틱 분석 결과. 각 종목별 detected_patterns(패턴명, 신뢰도, 방향), overall_signal(BUY/SELL/HOLD), signal_strength 필드를 포함.
+  agent: candlestick_analyst
+
+analyze_chart_pattern_task:
+  description: >
+    후보 종목의 가격 데이터에서 차트 패턴을 탐지하세요.
+    쌍봉/쌍바닥, 삼중천정/삼중바닥, 삼각수렴, 깃발형, 쐐기형, 머리어깨형 등을 식별하고,
+    각 패턴의 신뢰도(50%~100%)와 예상 방향을 평가하세요.
+    패턴 완성도와 돌파 여부도 함께 판단하세요.
+  expected_output: >
+    JSON 형식의 차트 패턴 분석 결과. 각 종목별 detected_patterns(패턴명, 신뢰도, 방향, 목표가), overall_signal, signal_strength 필드를 포함.
+  agent: chart_pattern_analyst
+
+analyze_support_resistance_task:
+  description: >
+    후보 종목의 가격 데이터에서 주요 지지선과 저항선을 식별하세요.
+    2회 이상 반등한 수준을 지지/저항으로 인식하고, 지지-저항 전환 현상을 탐지하세요.
+    현재 가격 대비 가장 가까운 지지/저항 수준과의 거리(%)를 계산하세요.
+  expected_output: >
+    JSON 형식의 지지/저항 분석 결과. 각 종목별 support_levels, resistance_levels, nearest_support, nearest_resistance, role_reversals, signal 필드를 포함.
+  agent: support_resistance_analyst
+
+analyze_volume_task:
+  description: >
+    후보 종목의 거래량 데이터를 분석하세요.
+    최근 거래량 추세, 이상 거래량 탐지, OBV(On-Balance Volume) 분석,
+    가격-거래량 괴리 여부를 확인하세요.
+    거래량이 가격 움직임을 뒷받침하는지 평가하세요.
+  expected_output: >
+    JSON 형식의 거래량 분석 결과. 각 종목별 volume_trend, abnormal_volume, obv_signal, price_volume_divergence, signal 필드를 포함.
+  agent: volume_analyst
+
+generate_recommendation_task:
+  description: >
+    모든 기술적 분석 결과(캔들스틱, 차트패턴, 지지/저항, 거래량)와 뉴스 감성을 종합하여
+    각 종목에 대한 최종 투자 추천을 생성하세요.
+    가중치: 뉴스(20%) + 캔들(20%) + 차트패턴(25%) + 지지저항(20%) + 거래량(15%)
+    BUY/SELL/HOLD 판정과 함께 신뢰도, 목표가, 손절가를 제시하세요.
+  expected_output: >
+    JSON 형식의 최종 추천 목록. 각 종목별 action(BUY/SELL/HOLD), confidence, target_price, stop_loss,
+    reasoning(종합 근거), component_signals(개별 분석 점수) 필드를 포함.
+  agent: recommendation_agent

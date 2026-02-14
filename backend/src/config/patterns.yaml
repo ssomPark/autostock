@@ -1,0 +1,259 @@
+# 차트 패턴 설정 + 신뢰도(%) - ReferenceData 이미지 기반
+
+candlestick_patterns:
+  single_candle:
+    - name: hammer
+      korean: 해머형 (망치형)
+      ta_func: CDL_HAMMER
+      direction: bullish
+      description: 하락 추세 후 긴 아래꼬리, 작은 몸통
+    - name: inverted_hammer
+      korean: 역해머형 (역망치형)
+      ta_func: CDL_INVERTEDHAMMER
+      direction: bullish
+      description: 하락 추세 후 긴 윗꼬리, 작은 몸통
+    - name: hanging_man
+      korean: 교수형 (행잉맨)
+      ta_func: CDL_HANGINGMAN
+      direction: bearish
+      description: 상승 추세 후 긴 아래꼬리, 작은 몸통
+    - name: shooting_star
+      korean: 유성형
+      ta_func: CDL_SHOOTINGSTAR
+      direction: bearish
+      description: 상승 추세 후 긴 윗꼬리, 작은 몸통
+    - name: doji
+      korean: 도지
+      ta_func: CDL_DOJI
+      direction: neutral
+      description: 시가=종가, 추세전환 신호
+    - name: dragonfly_doji
+      korean: 잠자리형 도지
+      ta_func: CDL_DRAGONFLYDOJI
+      direction: bullish
+      description: 시가=종가=고가, 긴 아래꼬리
+    - name: gravestone_doji
+      korean: 잠석형 도지 (추세전환 신호)
+      ta_func: CDL_GRAVESTONEDOJI
+      direction: bearish
+      description: 시가=종가=저가, 긴 윗꼬리
+    - name: marubozu
+      korean: 장대양봉/장대음봉 (마루보즈)
+      ta_func: CDL_MARUBOZU
+      direction: trend_continuation
+      description: 꼬리 없는 긴 몸통, 강한 추세
+    - name: spinning_top
+      korean: 스피닝탑
+      ta_func: CDL_SPINNINGTOP
+      direction: neutral
+      description: 작은 몸통, 위아래 꼬리
+    - name: high_wave
+      korean: 하이웨이봉
+      ta_func: CDL_HIGHWAVE
+      direction: neutral
+      description: 작은 몸통, 매우 긴 위아래 꼬리
+    - name: rickshaw_man
+      korean: 릭쇼맨 도지
+      ta_func: CDL_RICKSHAWMAN
+      direction: neutral
+      description: 도지 변형, 긴 위아래 꼬리
+
+  double_candle:
+    - name: bullish_harami
+      korean: 상승 잉태형
+      ta_func: CDL_HARAMI
+      direction: bullish
+      confidence: 53
+    - name: bearish_harami
+      korean: 하락 잉태형
+      ta_func: CDL_HARAMI
+      direction: bearish
+      confidence: 53
+    - name: bullish_engulfing
+      korean: 상승 장악형
+      ta_func: CDL_ENGULFING
+      direction: bullish
+      confidence: 63
+    - name: bearish_engulfing
+      korean: 하락 장악형
+      ta_func: CDL_ENGULFING
+      direction: bearish
+      confidence: 63
+    - name: high_point_reversal
+      korean: 고점일치 약세 반전
+      direction: bearish
+      confidence: 64
+      description: 두 캔들의 고점이 일치한 후 하락
+    - name: low_point_reversal
+      korean: 저점일치 강세 반전
+      direction: bullish
+      confidence: 64
+      description: 두 캔들의 저점이 일치한 후 상승
+
+  multi_candle:
+    - name: morning_star
+      korean: 샛별 (모닝스타)
+      ta_func: CDL_MORNINGSTAR
+      direction: bullish
+      description: 3봉 상승 반전 패턴
+    - name: evening_star
+      korean: 별 (이브닝스타)
+      ta_func: CDL_EVENINGSTAR
+      direction: bearish
+      description: 3봉 하락 반전 패턴
+    - name: three_white_soldiers
+      korean: 삼존 (적삼병)
+      ta_func: CDL_3WHITESOLDIERS
+      direction: bullish
+    - name: three_black_crows
+      korean: 흑삼병
+      ta_func: CDL_3BLACKCROWS
+      direction: bearish
+
+# 매수 패턴 조합 (사세요)
+buy_patterns:
+  - name: morning_star_hammer
+    korean: 샛별 + 망치
+    components: [morning_star, hammer]
+  - name: double_bottom_reversal
+    korean: 더블바텀 + 음선후양선
+    components: [double_bottom, bullish_engulfing]
+  - name: inverse_triple_top_morning_star
+    korean: 역산존 + 샛별
+    components: [inverse_head_shoulders, morning_star]
+  - name: saucer_bottom_swallow
+    korean: 소서바텀 + 제비둘러쥐
+    components: [saucer_bottom, bullish_harami]
+  - name: triangle_flag
+    korean: 삼각법 + 햇빛진달래선
+    components: [ascending_triangle, morning_star]
+
+# 매도 패턴 조합 (팔아요)
+sell_patterns:
+  - name: star_dark_cloud
+    korean: 별 + 흑삼병
+    components: [evening_star, three_black_crows]
+  - name: bearish_engulfing_shadow
+    korean: 음의장악형 + 꼬리선
+    components: [bearish_engulfing, shooting_star]
+  - name: spike_hammer
+    korean: 스파이크고 + 망치
+    components: [spike_high, hanging_man]
+  - name: tombstone_three_shadows
+    korean: 돔부스러기 + 그늘3개
+    components: [gravestone_doji, three_black_crows]
+  - name: descending_flag_reversal
+    korean: 하강페넌트 + 슬러스다운
+    components: [bear_flag, bearish_engulfing]
+  - name: descending_flag_sunlight
+    korean: 하강깃발그 + 햇빛두동강
+    components: [bear_flag, evening_star]
+
+chart_patterns:
+  sell_signals:
+    - name: double_top
+      korean: 쌍봉
+      confidence: 100
+      description: 두 번의 고점 후 하락
+      action: 폭락에 대비해
+    - name: bear_flag
+      korean: 하락깃발
+      confidence: 80
+      description: 하락 추세 중 약한 반등 후 재하락
+      action: 빨리 팔아
+    - name: descending_diamond
+      korean: 하락다이아몬드
+      confidence: 65
+      description: 다이아몬드형 패턴 후 하락
+      action: 천천히 내려간다
+    - name: triple_top
+      korean: 삼중천정
+      confidence: 90
+      description: 세 번의 고점 후 하락
+      action: 폭락에 대비해
+    - name: rising_wedge
+      korean: 상승쐐기형
+      confidence: 75
+      description: 좁아지는 상승 채널
+      action: 빨리 팔아
+
+  wait_signals:
+    - name: symmetrical_triangle
+      korean: 대칭삼각형 수렴
+      confidence: 50
+      description: 위아래 수렴, 방향 미정
+      action: 건들지마 위험
+    - name: box_range
+      korean: 박스권 보합
+      confidence: 50
+      description: 수평 지지/저항 사이 횡보
+      action: 건들지마 위험
+
+  buy_signals:
+    - name: ascending_triangle
+      korean: 상승삼각형
+      confidence: 65
+      description: 저점 상승, 고점 수평
+      action: 급하게 사
+    - name: inverse_head_shoulders
+      korean: 역머리어깨형
+      confidence: 65
+      description: 역 H&S 패턴, 강한 반전
+      action: 급하게 사
+    - name: bull_flag
+      korean: 상승깃발
+      confidence: 80
+      description: 상승 추세 중 약한 조정 후 재상승
+      action: 급하게 사
+    - name: ascending_wedge
+      korean: 상승배기형
+      confidence: 100
+      description: 넓어지는 상승 패턴
+      action: 폭등에 대비해
+    - name: double_bottom
+      korean: 쌍바닥
+      confidence: 90
+      description: 두 번의 저점 후 상승
+      action: 폭등에 대비해
+    - name: triple_bottom
+      korean: 트리플바닥
+      confidence: 95
+      description: 세 번의 저점 후 상승
+      action: 폭등에 대비해
+
+breakout_pullback_patterns:
+  - name: rectangle
+    korean: 직사각형 파동
+    description: 박스권 돌파 후 되돌림, 재상승
+  - name: flag
+    korean: 깃발 파동
+    description: 깃발형 돌파 후 되돌림, 재상승
+  - name: double_bottom_wave
+    korean: 쌍바닥 파동
+    description: W자 저점 돌파 후 되돌림, 재상승
+  - name: head_shoulders_wave
+    korean: H&S 파동
+    description: 역머리어깨 돌파 후 되돌림, 재상승
+  - name: wedge_wave
+    korean: 쐐기 파동
+    description: 수렴형 돌파 후 되돌림, 재상승
+  - name: dome_wave
+    korean: 돔 파동
+    description: 원형바닥 돌파 후 되돌림, 재상승
+
+# 신호 가중치
+signal_weights:
+  news_sentiment: 0.20
+  candlestick: 0.20
+  chart_pattern: 0.25
+  support_resistance: 0.20
+  volume: 0.15
+
+# 추천 임계값
+recommendation_thresholds:
+  strong_buy: 0.7
+  buy: 0.3
+  hold_upper: 0.3
+  hold_lower: -0.3
+  sell: -0.3
+  strong_sell: -0.7
