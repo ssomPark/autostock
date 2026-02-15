@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     api_port: int = 8000
     frontend_url: str = "http://localhost:3000"
 
+    # N8N
+    n8n_webhook_url: str = "http://n8n_live:5678/webhook/autostock-pipeline"
+    n8n_backend_url: str = "http://autostock-backend:8000"
+
     # Paths
     base_dir: Path = Path(__file__).resolve().parent.parent.parent
 

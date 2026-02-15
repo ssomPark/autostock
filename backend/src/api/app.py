@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.config.settings import settings
 from src.db.database import init_db, close_db
-from src.api.routes import recommendations, analysis, news, pipeline, websocket
+from src.api.routes import recommendations, analysis, news, pipeline, websocket, n8n
 
 logger = logging.getLogger(__name__)
 
@@ -19,10 +19,17 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
     logger.info("Starting AutoStock API server...")
-    await init_db()
+    try:
+        await init_db()
+        logger.info("Database connected successfully")
+    except Exception as e:
+        logger.warning(f"Database not available (running without DB): {e}")
     yield
     logger.info("Shutting down AutoStock API server...")
-    await close_db()
+    try:
+        await close_db()
+    except Exception:
+        pass
 
 
 app = FastAPI(
@@ -45,6 +52,7 @@ app.include_router(analysis.router, prefix="/api/analysis", tags=["analysis"])
 app.include_router(news.router, prefix="/api/news", tags=["news"])
 app.include_router(pipeline.router, prefix="/api/pipeline", tags=["pipeline"])
 app.include_router(websocket.router, prefix="/ws", tags=["websocket"])
+app.include_router(n8n.router, prefix="/api/n8n", tags=["n8n"])
 
 
 @app.get("/api/health")

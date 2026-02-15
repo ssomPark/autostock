@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { createChart, type IChartApi, type ISeriesApi } from "lightweight-charts";
+import { createChart, type IChartApi } from "lightweight-charts";
 import { useQuery } from "@tanstack/react-query";
-import { fetchAnalysis } from "@/lib/api";
+import { fetchOHLCV } from "@/lib/api";
 
 interface CandlestickChartProps {
   ticker: string;
@@ -14,8 +14,22 @@ export function CandlestickChart({ ticker, market }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
 
+  const { data, isLoading } = useQuery({
+    queryKey: ["ohlcv", ticker, market],
+    queryFn: () => fetchOHLCV(ticker, market),
+  });
+
   useEffect(() => {
     if (!containerRef.current) return;
+
+    const ohlcv = data?.data;
+    if (!ohlcv || ohlcv.length === 0) return;
+
+    // Clean up previous chart
+    if (chartRef.current) {
+      chartRef.current.remove();
+      chartRef.current = null;
+    }
 
     const chart = createChart(containerRef.current, {
       layout: {
@@ -35,7 +49,6 @@ export function CandlestickChart({ ticker, market }: CandlestickChartProps) {
 
     chartRef.current = chart;
 
-    // Demo data
     const candlestickSeries = chart.addCandlestickSeries({
       upColor: "#22c55e",
       downColor: "#ef4444",
@@ -45,9 +58,14 @@ export function CandlestickChart({ ticker, market }: CandlestickChartProps) {
       wickUpColor: "#22c55e",
     });
 
-    // Generate sample data for display
-    const data = generateSampleData();
-    candlestickSeries.setData(data);
+    const candleData = ohlcv.map((d: any) => ({
+      time: d.time,
+      open: d.open,
+      high: d.high,
+      low: d.low,
+      close: d.close,
+    }));
+    candlestickSeries.setData(candleData);
 
     const volumeSeries = chart.addHistogramSeries({
       priceFormat: { type: "volume" },
@@ -58,9 +76,9 @@ export function CandlestickChart({ ticker, market }: CandlestickChartProps) {
       scaleMargins: { top: 0.8, bottom: 0 },
     });
 
-    const volumeData = data.map((d) => ({
+    const volumeData = ohlcv.map((d: any) => ({
       time: d.time,
-      value: Math.random() * 10000000 + 5000000,
+      value: d.volume,
       color: d.close >= d.open ? "rgba(34,197,94,0.3)" : "rgba(239,68,68,0.3)",
     }));
     volumeSeries.setData(volumeData);
@@ -77,8 +95,9 @@ export function CandlestickChart({ ticker, market }: CandlestickChartProps) {
     return () => {
       window.removeEventListener("resize", handleResize);
       chart.remove();
+      chartRef.current = null;
     };
-  }, [ticker, market]);
+  }, [data]);
 
   return (
     <div>
@@ -86,38 +105,17 @@ export function CandlestickChart({ ticker, market }: CandlestickChartProps) {
         <h2 className="text-lg font-semibold">{ticker} 차트</h2>
         <span className="text-sm text-[var(--muted)]">{market}</span>
       </div>
+      {isLoading && (
+        <div className="h-[400px] flex items-center justify-center text-[var(--muted)]">
+          차트 로딩 중...
+        </div>
+      )}
+      {!isLoading && (!data?.data || data.data.length === 0) && (
+        <div className="h-[400px] flex items-center justify-center text-[var(--muted)]">
+          차트 데이터를 가져올 수 없습니다
+        </div>
+      )}
       <div ref={containerRef} />
     </div>
   );
-}
-
-function generateSampleData() {
-  const data: any[] = [];
-  let price = 70000;
-  const baseDate = new Date("2025-10-01");
-
-  for (let i = 0; i < 90; i++) {
-    const date = new Date(baseDate);
-    date.setDate(date.getDate() + i);
-
-    // Skip weekends
-    if (date.getDay() === 0 || date.getDay() === 6) continue;
-
-    const change = (Math.random() - 0.48) * price * 0.03;
-    const open = price;
-    const close = price + change;
-    const high = Math.max(open, close) + Math.random() * price * 0.01;
-    const low = Math.min(open, close) - Math.random() * price * 0.01;
-    price = close;
-
-    data.push({
-      time: date.toISOString().split("T")[0],
-      open: Math.round(open),
-      high: Math.round(high),
-      low: Math.round(low),
-      close: Math.round(close),
-    });
-  }
-
-  return data;
 }

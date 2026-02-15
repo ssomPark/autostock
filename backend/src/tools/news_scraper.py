@@ -8,6 +8,8 @@ Crawls Korean financial news from:
 
 from __future__ import annotations
 
+import json
+
 from crewai.tools import BaseTool
 from pydantic import Field
 import httpx
@@ -32,7 +34,7 @@ class NewsCrawlerTool(BaseTool):
         articles.extend(self._crawl_naver_finance(category))
         articles.extend(self._crawl_maeil(category))
         articles.extend(self._crawl_hankyung(category))
-        return str(articles)
+        return json.dumps(articles, ensure_ascii=False)
 
     def _crawl_naver_finance(self, category: str) -> list[dict]:
         """Crawl Naver Finance news."""
@@ -155,4 +157,4 @@ class NaverFinanceScraperTool(BaseTool):
                     })
         except Exception as e:
             logger.warning(f"Naver stock news crawl failed: {e}")
-        return str(articles[:15])
+        return json.dumps(articles[:15], ensure_ascii=False)

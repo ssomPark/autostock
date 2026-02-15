@@ -1,0 +1,596 @@
+{
+  "name": "AutoStock Pipeline",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "autostock-pipeline",
+        "responseMode": "onReceived",
+        "responseData": "allEntries",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [0, 300],
+      "webhookId": "autostock-pipeline"
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.body.backend_url }}/api/n8n/progress",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"step\": \"news\", \"action\": \"start\"}",
+        "options": {}
+      },
+      "id": "progress-news-start",
+      "name": "Progress: News Start",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [250, 300]
+    },
+
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Webhook Trigger').first().json.body.backend_url }}/api/news/collect",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "collect-news",
+      "name": "Collect News",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [500, 300]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Webhook Trigger').first().json.body.backend_url }}/api/n8n/progress",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"step\": \"news\", \"action\": \"done\", \"summary\": \"{{ $json.data.length }}건 수집\"}",
+        "options": {}
+      },
+      "id": "progress-news-done",
+      "name": "Progress: News Done",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [750, 300]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Webhook Trigger').first().json.body.backend_url }}/api/n8n/progress",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"step\": \"keywords\", \"action\": \"start\"}",
+        "options": {}
+      },
+      "id": "progress-keywords-start",
+      "name": "Progress: Keywords Start",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1000, 300]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o-mini\",\n  \"temperature\": 0.3,\n  \"response_format\": {\"type\": \"json_object\"},\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify(\"다음 뉴스 기사들에서 주식 투자와 관련된 핵심 키워드와 각 키워드의 감성 점수를 추출하세요.\\n\\n뉴스 데이터:\\n\" + JSON.stringify($('Collect News').first().json.data) + \"\\n\\n다음 JSON 형식으로만 응답하세요:\\n{\\n  \\\"keywords\\\": [\\n    {\\n      \\\"keyword\\\": \\\"키워드명\\\",\\n      \\\"sentiment\\\": 0.5,\\n      \\\"reason\\\": \\\"감성 판단 근거\\\"\\n    }\\n  ]\\n}\\n\\nsentiment 값은 -1.0(매우 부정)에서 1.0(매우 긍정) 사이입니다.\\n관련 종목이나 섹터를 키워드로 추출하세요.\\n최대 10개 키워드를 추출하세요.\") }}\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "openai-keywords",
+      "name": "OpenAI: Extract Keywords",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1250, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "IL3qN8u9aBFFyVhE",
+          "name": "OpenAi account"
+        }
+      }
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Parse the OpenAI chat completion response\nconst content = $input.item.json.choices[0].message.content;\nconst response = JSON.parse(content);\nconst keywords = response.keywords || [];\n\n// Extract keyword names for stock mapping\nconst keywordNames = keywords.map(k => k.keyword);\n\n// Calculate average sentiment\nconst avgSentiment = keywords.length > 0\n  ? keywords.reduce((sum, k) => sum + k.sentiment, 0) / keywords.length\n  : 0;\n\nreturn {\n  json: {\n    keywords: keywords,\n    keyword_names: keywordNames,\n    avg_sentiment: avgSentiment,\n    count: keywords.length\n  }\n};"
+      },
+      "id": "parse-keywords",
+      "name": "Parse Keywords",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1500, 300]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Webhook Trigger').first().json.body.backend_url }}/api/n8n/progress",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"step\": \"keywords\", \"action\": \"done\", \"summary\": \"{{ $json.count }}개 키워드 추출\"}",
+        "options": {}
+      },
+      "id": "progress-keywords-done",
+      "name": "Progress: Keywords Done",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1750, 300]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Webhook Trigger').first().json.body.backend_url }}/api/n8n/progress",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"step\": \"screening\", \"action\": \"start\"}",
+        "options": {}
+      },
+      "id": "progress-screening-start",
+      "name": "Progress: Screening Start",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2000, 300]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Webhook Trigger').first().json.body.backend_url }}/api/n8n/stock-mapping",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"keywords\": {{ JSON.stringify($('Parse Keywords').first().json.keyword_names) }} }",
+        "options": {}
+      },
+      "id": "stock-mapping",
+      "name": "Stock Mapping",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2250, 300]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Webhook Trigger').first().json.body.backend_url }}/api/n8n/market-screener",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"market\": \"{{ $('Webhook Trigger').first().json.body.market || 'KR' }}\", \"limit\": 15}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "market-data-screener",
+      "name": "Market Data Screener",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2500, 300]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Merge keyword-mapped stocks with market data stocks\n// Priority: keyword-mapped stocks first (they have news context)\nconst keywordStocks = $('Stock Mapping').first().json.data || [];\nconst marketStocks = $('Market Data Screener').first().json.data || [];\n\nconst merged = [];\nconst seen = new Set();\n\n// Add keyword-mapped stocks first (priority)\nfor (const stock of keywordStocks) {\n  if (!seen.has(stock.ticker)) {\n    merged.push({ ...stock, source_type: 'keyword' });\n    seen.add(stock.ticker);\n  }\n}\n\nconst keywordCount = merged.length;\n\n// Add market data stocks (fill up to max 20)\nfor (const stock of marketStocks) {\n  if (merged.length >= 20) break;\n  if (!seen.has(stock.ticker)) {\n    merged.push({\n      ticker: stock.ticker,\n      name: stock.name,\n      market: stock.market,\n      source_type: 'market_data'\n    });\n    seen.add(stock.ticker);\n  }\n}\n\nconst marketCount = merged.length - keywordCount;\n\nreturn {\n  json: {\n    data: merged,\n    count: merged.length,\n    keyword_count: keywordCount,\n    market_count: marketCount,\n    summary: `${merged.length}개 종목 (키워드: ${keywordCount}, 시장: ${marketCount})`\n  }\n};"
+      },
+      "id": "merge-screening",
+      "name": "Merge Screening Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2750, 300]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Webhook Trigger').first().json.body.backend_url }}/api/n8n/progress",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"step\": \"screening\", \"action\": \"done\", \"summary\": \"{{ $json.summary }}\"}",
+        "options": {}
+      },
+      "id": "progress-screening-done",
+      "name": "Progress: Screening Done",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3000, 300]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Webhook Trigger').first().json.body.backend_url }}/api/n8n/progress",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"step\": \"analysis\", \"action\": \"start\"}",
+        "options": {}
+      },
+      "id": "progress-analysis-start",
+      "name": "Progress: Analysis Start",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3000, 300]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Get merged stocks from Merge Screening Results\nconst stocks = $('Merge Screening Results').first().json.data || [];\nconst backendUrl = $('Webhook Trigger').first().json.body.backend_url;\nconst pipelineId = $('Webhook Trigger').first().json.body.pipeline_id;\nconst market = $('Webhook Trigger').first().json.body.market;\n\n// If no stocks found, complete pipeline gracefully\nif (stocks.length === 0) {\n  const steps = ['analysis', 'recommendation', 'save'];\n  for (const step of steps) {\n    await this.helpers.httpRequest({ method: 'POST', url: `${backendUrl}/api/n8n/progress`, body: { step, action: 'done', summary: '해당 종목 없음' }, headers: { 'Content-Type': 'application/json' } });\n  }\n  await this.helpers.httpRequest({ method: 'POST', url: `${backendUrl}/api/n8n/save-recommendations`, body: { pipeline_id: pipelineId, market, recommendations: [] }, headers: { 'Content-Type': 'application/json' } });\n  await this.helpers.httpRequest({ method: 'POST', url: `${backendUrl}/api/n8n/complete`, body: { summary: '매핑된 종목이 없어 파이프라인을 조기 완료합니다' }, headers: { 'Content-Type': 'application/json' } });\n  return [];\n}\n\n// Return each stock as a separate item for the loop\nreturn stocks.map(stock => ({\n  json: {\n    ticker: stock.ticker,\n    name: stock.name,\n    market: stock.market\n  }\n}));"
+      },
+      "id": "split-stocks",
+      "name": "Split Stocks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3250, 300]
+    },
+
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Webhook Trigger').first().json.body.backend_url }}/api/analysis/{{ $json.ticker }}?market={{ $json.market }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "technical-analysis",
+      "name": "Technical Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [3500, 300]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Combine stock info with analysis results\nconst items = $input.all();\nconst analysisResults = [];\n\nfor (const item of items) {\n  const data = item.json;\n  if (data.success && data.data) {\n    const d = data.data;\n    const sr = d.support_resistance || {};\n    analysisResults.push({\n      ticker: d.ticker,\n      name: d.ticker,\n      market: d.market,\n      current_price: sr.current_price || 0,\n      nearest_support: sr.nearest_support || null,\n      nearest_resistance: sr.nearest_resistance || null,\n      candlestick: d.candlestick || {},\n      chart_pattern: d.chart_pattern || {},\n      support_resistance: sr,\n      volume: d.volume || {}\n    });\n  }\n}\n\nreturn [{\n  json: {\n    analysis_results: analysisResults,\n    count: analysisResults.length\n  }\n}];"
+      },
+      "id": "merge-analysis",
+      "name": "Merge Analysis Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3750, 300]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Webhook Trigger').first().json.body.backend_url }}/api/n8n/progress",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"step\": \"analysis\", \"action\": \"done\", \"summary\": \"{{ $json.count }}개 종목 분석 완료\"}",
+        "options": {}
+      },
+      "id": "progress-analysis-done",
+      "name": "Progress: Analysis Done",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [4000, 300]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Webhook Trigger').first().json.body.backend_url }}/api/n8n/progress",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"step\": \"recommendation\", \"action\": \"start\"}",
+        "options": {}
+      },
+      "id": "progress-recommendation-start",
+      "name": "Progress: Recommendation Start",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [4250, 300]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Prepare aggregate requests for each analyzed stock\nconst results = $('Merge Analysis Results').first().json.analysis_results || [];\nconst keywords = $('Parse Keywords').first().json.keywords || [];\nconst avgSentiment = $('Parse Keywords').first().json.avg_sentiment || 0;\nconst backendUrl = $('Webhook Trigger').first().json.body.backend_url;\nconst pipelineId = $('Webhook Trigger').first().json.body.pipeline_id;\nconst market = $('Webhook Trigger').first().json.body.market;\n\n// If no stocks were successfully analyzed, complete pipeline gracefully\nif (results.length === 0) {\n  // Save empty recommendations\n  await this.helpers.httpRequest({ method: 'POST', url: `${backendUrl}/api/n8n/save-recommendations`, body: { pipeline_id: pipelineId, market, recommendations: [] }, headers: { 'Content-Type': 'application/json' } });\n  // Mark remaining steps as done\n  const steps = ['recommendation', 'save'];\n  for (const step of steps) {\n    await this.helpers.httpRequest({ method: 'POST', url: `${backendUrl}/api/n8n/progress`, body: { step, action: 'done', summary: '분석된 종목 없음' }, headers: { 'Content-Type': 'application/json' } });\n  }\n  await this.helpers.httpRequest({ method: 'POST', url: `${backendUrl}/api/n8n/complete`, body: { summary: '분석 가능한 종목이 없어 파이프라인을 조기 완료합니다' }, headers: { 'Content-Type': 'application/json' } });\n  return [];\n}\n\nreturn results.map(r => ({\n  json: {\n    ticker: r.ticker,\n    name: r.name || r.ticker,\n    market: r.market,\n    current_price: r.current_price || 0,\n    nearest_support: r.nearest_support || null,\n    nearest_resistance: r.nearest_resistance || null,\n    news_sentiment: avgSentiment,\n    candlestick_strength: r.candlestick?.strength || 0,\n    chart_pattern_strength: r.chart_pattern?.strength || 0,\n    support_resistance_strength: r.support_resistance?.strength || 0,\n    volume_strength: r.volume?.strength || 0,\n    analysis_data: r,\n    backend_url: backendUrl\n  }\n}));"
+      },
+      "id": "prepare-aggregation",
+      "name": "Prepare Aggregation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [4500, 300]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.backend_url }}/api/n8n/aggregate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"ticker\": \"{{ $json.ticker }}\",\n  \"name\": \"{{ $json.name }}\",\n  \"market\": \"{{ $json.market }}\",\n  \"current_price\": {{ $json.current_price || 0 }},\n  \"nearest_support\": {{ $json.nearest_support || 'null' }},\n  \"nearest_resistance\": {{ $json.nearest_resistance || 'null' }},\n  \"news_sentiment\": {{ $json.news_sentiment }},\n  \"candlestick_strength\": {{ $json.candlestick_strength }},\n  \"chart_pattern_strength\": {{ $json.chart_pattern_strength }},\n  \"support_resistance_strength\": {{ $json.support_resistance_strength }},\n  \"volume_strength\": {{ $json.volume_strength }}\n}",
+        "options": {}
+      },
+      "id": "aggregate-signals",
+      "name": "Aggregate Signals",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [4750, 300]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"gpt-4o-mini\",\n  \"temperature\": 0.3,\n  \"response_format\": {\"type\": \"json_object\"},\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify(\"다음 주식 분석 결과를 바탕으로 투자 판단 근거를 한국어로 작성하세요.\\n\\n종목: \" + ($json.data?.ticker || '') + \" (\" + ($json.data?.name || '') + \")\\n시장: \" + ($json.data?.market || '') + \"\\n현재가: \" + ($json.data?.current_price || 0) + \"\\n종합 판정: \" + ($json.data?.action || '') + \"\\n종합 점수: \" + ($json.data?.composite_score || 0) + \"\\n신뢰도: \" + ($json.data?.confidence || 0) + \"\\n기본 분석: \" + ($json.data?.reasoning || '') + \"\\n지지선: \" + ($json.data?.nearest_support || '없음') + \"\\n저항선: \" + ($json.data?.nearest_resistance || '없음') + \"\\n\\n다음 JSON 형식으로만 응답하세요:\\n{\\n  \\\"reasoning\\\": \\\"투자 판단 근거 (2-3문장)\\\",\\n  \\\"target_price\\\": 목표가(숫자, 현재가 기준 5~15% 범위에서 판정 방향에 맞게 설정),\\n  \\\"stop_loss\\\": 손절가(숫자, 현재가 기준 3~8% 하락 수준)\\n}\\n\\ntarget_price와 stop_loss는 반드시 숫자로 제공하세요. null 불가.\") }}\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "openai-reasoning",
+      "name": "OpenAI: Generate Reasoning",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [5000, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "IL3qN8u9aBFFyVhE",
+          "name": "OpenAi account"
+        }
+      }
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Merge aggregation results with OpenAI reasoning\nconst items = $input.all();\nconst aggregateItems = $('Aggregate Signals').all();\nconst recommendations = [];\n\nfor (let i = 0; i < items.length; i++) {\n  const content = items[i].json.choices?.[0]?.message?.content || '{}';\n  let reasoning;\n  try { reasoning = JSON.parse(content); } catch(e) { reasoning = {}; }\n  const agg = aggregateItems[i]?.json?.data || {};\n  const price = agg.current_price || 0;\n  const action = agg.action || 'HOLD';\n  \n  // Use OpenAI values, or calculate fallback target/stop_loss\n  let targetPrice = reasoning.target_price || null;\n  let stopLoss = reasoning.stop_loss || null;\n  \n  if (price > 0 && !targetPrice) {\n    if (action === 'BUY') targetPrice = Math.round(price * 1.10 * 100) / 100;\n    else if (action === 'SELL') targetPrice = Math.round(price * 0.92 * 100) / 100;\n    else targetPrice = Math.round(price * 1.05 * 100) / 100;\n  }\n  if (price > 0 && !stopLoss) {\n    stopLoss = Math.round(price * 0.95 * 100) / 100;\n  }\n  \n  recommendations.push({\n    ticker: agg.ticker || '',\n    name: agg.name || '',\n    market: agg.market || '',\n    current_price: price,\n    action: action,\n    confidence: agg.confidence || 0,\n    composite_score: agg.composite_score || 0,\n    target_price: targetPrice,\n    stop_loss: stopLoss,\n    reasoning: reasoning.reasoning || agg.reasoning || '',\n    component_signals: agg.component_signals || {},\n    detected_patterns: []\n  });\n}\n\nreturn [{\n  json: {\n    recommendations: recommendations,\n    count: recommendations.length\n  }\n}];"
+      },
+      "id": "build-recommendations",
+      "name": "Build Recommendations",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [5250, 300]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Webhook Trigger').first().json.body.backend_url }}/api/n8n/progress",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"step\": \"recommendation\", \"action\": \"done\", \"summary\": \"{{ $json.count }}개 추천 생성\"}",
+        "options": {}
+      },
+      "id": "progress-recommendation-done",
+      "name": "Progress: Recommendation Done",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [5500, 300]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Webhook Trigger').first().json.body.backend_url }}/api/n8n/progress",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"step\": \"save\", \"action\": \"start\"}",
+        "options": {}
+      },
+      "id": "progress-save-start",
+      "name": "Progress: Save Start",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [5750, 300]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Webhook Trigger').first().json.body.backend_url }}/api/n8n/save-recommendations",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"pipeline_id\": \"{{ $('Webhook Trigger').first().json.body.pipeline_id }}\",\n  \"market\": \"{{ $('Webhook Trigger').first().json.body.market }}\",\n  \"recommendations\": {{ JSON.stringify($('Build Recommendations').first().json.recommendations) }}\n}",
+        "options": {}
+      },
+      "id": "save-recommendations",
+      "name": "Save Recommendations",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [6000, 300]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Webhook Trigger').first().json.body.backend_url }}/api/n8n/progress",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"step\": \"save\", \"action\": \"done\", \"summary\": \"DB 저장 완료\"}",
+        "options": {}
+      },
+      "id": "progress-save-done",
+      "name": "Progress: Save Done",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [6250, 300]
+    },
+
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Webhook Trigger').first().json.body.backend_url }}/api/n8n/complete",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"summary\": \"{{ $('Build Recommendations').first().json.count }}개 종목 분석 및 추천 완료\"}",
+        "options": {}
+      },
+      "id": "complete-pipeline",
+      "name": "Complete Pipeline",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [6500, 300]
+    },
+
+    {
+      "parameters": {
+        "jsCode": "// Error handler - report failure to backend\nconst error = $input.item.json;\nconst backendUrl = $('Webhook Trigger').first().json.body.backend_url;\n\n// Try to report the error\ntry {\n  const response = await this.helpers.httpRequest({\n    method: 'POST',\n    url: `${backendUrl}/api/n8n/progress`,\n    body: {\n      step: 'unknown',\n      action: 'fail',\n      error: error.message || 'Unknown error in N8N workflow'\n    },\n    headers: { 'Content-Type': 'application/json' }\n  });\n} catch (e) {\n  // Ignore reporting errors\n}\n\nreturn [{ json: { error: true, message: error.message } }];"
+      },
+      "id": "error-handler",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3250, 600]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [{ "node": "Progress: News Start", "type": "main", "index": 0 }]
+      ]
+    },
+    "Progress: News Start": {
+      "main": [
+        [{ "node": "Collect News", "type": "main", "index": 0 }]
+      ]
+    },
+    "Collect News": {
+      "main": [
+        [{ "node": "Progress: News Done", "type": "main", "index": 0 }]
+      ]
+    },
+    "Progress: News Done": {
+      "main": [
+        [{ "node": "Progress: Keywords Start", "type": "main", "index": 0 }]
+      ]
+    },
+    "Progress: Keywords Start": {
+      "main": [
+        [{ "node": "OpenAI: Extract Keywords", "type": "main", "index": 0 }]
+      ]
+    },
+    "OpenAI: Extract Keywords": {
+      "main": [
+        [{ "node": "Parse Keywords", "type": "main", "index": 0 }]
+      ]
+    },
+    "Parse Keywords": {
+      "main": [
+        [{ "node": "Progress: Keywords Done", "type": "main", "index": 0 }]
+      ]
+    },
+    "Progress: Keywords Done": {
+      "main": [
+        [{ "node": "Progress: Screening Start", "type": "main", "index": 0 }]
+      ]
+    },
+    "Progress: Screening Start": {
+      "main": [
+        [{ "node": "Stock Mapping", "type": "main", "index": 0 }]
+      ]
+    },
+    "Stock Mapping": {
+      "main": [
+        [{ "node": "Market Data Screener", "type": "main", "index": 0 }]
+      ]
+    },
+    "Market Data Screener": {
+      "main": [
+        [{ "node": "Merge Screening Results", "type": "main", "index": 0 }]
+      ]
+    },
+    "Merge Screening Results": {
+      "main": [
+        [{ "node": "Progress: Screening Done", "type": "main", "index": 0 }]
+      ]
+    },
+    "Progress: Screening Done": {
+      "main": [
+        [{ "node": "Progress: Analysis Start", "type": "main", "index": 0 }]
+      ]
+    },
+    "Progress: Analysis Start": {
+      "main": [
+        [{ "node": "Split Stocks", "type": "main", "index": 0 }]
+      ]
+    },
+    "Split Stocks": {
+      "main": [
+        [{ "node": "Technical Analysis", "type": "main", "index": 0 }]
+      ]
+    },
+    "Technical Analysis": {
+      "main": [
+        [{ "node": "Merge Analysis Results", "type": "main", "index": 0 }]
+      ]
+    },
+    "Merge Analysis Results": {
+      "main": [
+        [{ "node": "Progress: Analysis Done", "type": "main", "index": 0 }]
+      ]
+    },
+    "Progress: Analysis Done": {
+      "main": [
+        [{ "node": "Progress: Recommendation Start", "type": "main", "index": 0 }]
+      ]
+    },
+    "Progress: Recommendation Start": {
+      "main": [
+        [{ "node": "Prepare Aggregation", "type": "main", "index": 0 }]
+      ]
+    },
+    "Prepare Aggregation": {
+      "main": [
+        [{ "node": "Aggregate Signals", "type": "main", "index": 0 }]
+      ]
+    },
+    "Aggregate Signals": {
+      "main": [
+        [{ "node": "OpenAI: Generate Reasoning", "type": "main", "index": 0 }]
+      ]
+    },
+    "OpenAI: Generate Reasoning": {
+      "main": [
+        [{ "node": "Build Recommendations", "type": "main", "index": 0 }]
+      ]
+    },
+    "Build Recommendations": {
+      "main": [
+        [{ "node": "Progress: Recommendation Done", "type": "main", "index": 0 }]
+      ]
+    },
+    "Progress: Recommendation Done": {
+      "main": [
+        [{ "node": "Progress: Save Start", "type": "main", "index": 0 }]
+      ]
+    },
+    "Progress: Save Start": {
+      "main": [
+        [{ "node": "Save Recommendations", "type": "main", "index": 0 }]
+      ]
+    },
+    "Save Recommendations": {
+      "main": [
+        [{ "node": "Progress: Save Done", "type": "main", "index": 0 }]
+      ]
+    },
+    "Progress: Save Done": {
+      "main": [
+        [{ "node": "Complete Pipeline", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    { "name": "AutoStock" },
+    { "name": "Pipeline" }
+  ],
+  "triggerCount": 1,
+  "active": true
+}

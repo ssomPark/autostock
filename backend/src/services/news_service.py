@@ -21,7 +21,7 @@ class NewsService:
         result = self.crawler._run(category)
         try:
             import json
-            articles = json.loads(result) if isinstance(result, str) else eval(result)
+            articles = json.loads(result)
         except Exception:
             articles = []
         logger.info(f"Collected {len(articles)} news articles")

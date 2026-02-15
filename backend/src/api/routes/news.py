@@ -10,7 +10,7 @@ router = APIRouter()
 news_service = NewsService()
 
 
-@router.get("/")
+@router.get("")
 async def get_news(
     source: str = Query("all", description="Source filter"),
     limit: int = Query(20, ge=1, le=100),

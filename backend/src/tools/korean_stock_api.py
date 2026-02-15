@@ -43,17 +43,17 @@ class KoreanStockAPITool(BaseTool):
         try:
             self._ensure_token()
             if action == "price":
-                return str(self._get_current_price(ticker))
+                return json.dumps(self._get_current_price(ticker), default=str)
             elif action == "ohlcv":
                 period = params.get("period", "D")
-                return str(self._get_ohlcv(ticker, period))
+                return json.dumps(self._get_ohlcv(ticker, period), default=str)
             elif action == "info":
-                return str(self._get_stock_info(ticker))
+                return json.dumps(self._get_stock_info(ticker), default=str)
             else:
-                return f"Unknown action: {action}"
+                return json.dumps({"error": f"Unknown action: {action}"})
         except Exception as e:
             logger.error(f"KIS API error: {e}")
-            return f"Error: {e}"
+            return json.dumps({"error": str(e)})
 
     def _ensure_token(self) -> None:
         """Get or refresh OAuth token."""
@@ -130,7 +130,7 @@ class KoreanStockAPITool(BaseTool):
     def _mock_data(self, ticker: str, action: str) -> str:
         """Return mock data when API keys are not configured."""
         if action == "price":
-            return str({
+            return json.dumps({
                 "ticker": ticker,
                 "current_price": 70000,
                 "change": 500,
@@ -143,7 +143,7 @@ class KoreanStockAPITool(BaseTool):
         elif action == "ohlcv":
             import random
             ohlcv = []
-            price = 70000
+            price = 70000.0
             for i in range(60):
                 change = random.uniform(-0.03, 0.03)
                 o = price
@@ -160,5 +160,5 @@ class KoreanStockAPITool(BaseTool):
                     "volume": v,
                 })
                 price = c
-            return str(ohlcv)
-        return str({"ticker": ticker, "note": "Mock data"})
+            return json.dumps(ohlcv)
+        return json.dumps({"ticker": ticker, "note": "Mock data"})

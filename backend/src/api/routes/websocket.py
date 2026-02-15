@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import set as Set
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 

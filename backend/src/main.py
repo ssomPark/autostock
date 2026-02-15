@@ -31,7 +31,7 @@ def main():
         "src.api.app:app",
         host=settings.api_host,
         port=settings.api_port,
-        reload=True,
+        reload=False,
         log_level="info",
     )
 

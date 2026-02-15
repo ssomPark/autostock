@@ -34,17 +34,17 @@ class USStockAPITool(BaseTool):
         try:
             stock = yf.Ticker(ticker)
             if action == "price":
-                return str(self._get_price(stock, ticker))
+                return json.dumps(self._get_price(stock, ticker), default=str)
             elif action == "ohlcv":
                 period = params.get("period", "3mo")
-                return str(self._get_ohlcv(stock, period))
+                return json.dumps(self._get_ohlcv(stock, period), default=str)
             elif action == "info":
-                return str(self._get_info(stock, ticker))
+                return json.dumps(self._get_info(stock, ticker), default=str)
             else:
-                return f"Unknown action: {action}"
+                return json.dumps({"error": f"Unknown action: {action}"})
         except Exception as e:
             logger.error(f"yfinance error for {ticker}: {e}")
-            return f"Error: {e}"
+            return json.dumps({"error": str(e)})
 
     def _get_price(self, stock: yf.Ticker, ticker: str) -> dict:
         """Get current price info."""
