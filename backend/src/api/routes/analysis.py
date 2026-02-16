@@ -202,10 +202,15 @@ async def get_full_analysis(
     sr = _sanitize(SupportResistanceDetector(df).get_signal())
     volume = _sanitize(VolumeAnalyzer(df).get_signal())
 
+    # Fetch company name
+    fundamentals = _get_fundamentals(ticker, market)
+    name = fundamentals.get("shortName") or ticker
+
     return {
         "success": True,
         "data": {
             "ticker": ticker,
+            "name": name,
             "market": market,
             "candlestick": candlestick,
             "chart_pattern": chart_pattern,

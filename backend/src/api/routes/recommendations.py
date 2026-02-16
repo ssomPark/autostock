@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,13 +11,35 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.db.database import get_async_session
 from src.models.db_models import RecommendationModel, PipelineRunModel
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# In-memory cache for resolved names to avoid repeated yfinance calls
+_name_cache: dict[str, str] = {}
+
+
+def _resolve_name(ticker: str, market: str) -> str:
+    """Resolve stock name from ticker (cached)."""
+    if ticker in _name_cache:
+        return _name_cache[ticker]
+    try:
+        from src.api.routes.n8n import _resolve_stock_name
+        name = _resolve_stock_name(ticker, market)
+        _name_cache[ticker] = name
+        return name
+    except Exception:
+        return ticker
 
 
 def _rec_to_dict(r: RecommendationModel) -> dict:
+    # If name is missing or same as ticker, resolve it
+    name = r.name
+    if not name or name == r.ticker:
+        name = _resolve_name(r.ticker, r.market or "KOSPI")
+
     return {
         "ticker": r.ticker,
-        "name": r.name,
+        "name": name,
         "market": r.market,
         "current_price": r.current_price,
         "action": r.action,

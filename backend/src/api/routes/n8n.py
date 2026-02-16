@@ -8,10 +8,12 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 
+import yfinance as yf
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.analysis.scoring_engine import ScoringEngine
 from src.analysis.signal_aggregator import ComponentSignal, SignalAggregator
 from src.db.database import get_async_session
 from src.models.db_models import PipelineRunModel, RecommendationModel
@@ -21,6 +23,31 @@ from src.tools.stock_mapper import KEYWORD_TICKER_MAP
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _resolve_stock_name(ticker: str, market: str = "KOSPI") -> str:
+    """Resolve stock name from ticker via stock_mapper or yfinance."""
+    # 1. Check stock_mapper for known tickers
+    for _key, val in KEYWORD_TICKER_MAP.items():
+        entries = val if isinstance(val, list) else [val]
+        for entry in entries:
+            if entry["ticker"] == ticker:
+                return entry["name"]
+
+    # 2. Fallback to yfinance
+    try:
+        yf_ticker = ticker
+        if ticker.isdigit():
+            suffix = ".KQ" if market.upper() == "KOSDAQ" else ".KS"
+            yf_ticker = f"{ticker}{suffix}"
+        info = yf.Ticker(yf_ticker).info or {}
+        name = info.get("shortName") or info.get("longName")
+        if name:
+            return name
+    except Exception as e:
+        logger.warning(f"Failed to resolve name for {ticker}: {e}")
+
+    return ticker
 
 
 # --- Request/Response Models ---
@@ -157,7 +184,7 @@ async def market_screener(req: MarketScreenerRequest):
         return {"success": True, "data": data, "count": len(data)}
     except Exception as e:
         logger.error(f"Market screener failed: {e}")
-        return {"success": True, "data": [], "count": 0}
+        return {"success": False, "data": [], "count": 0, "error": str(e)}
 
 
 @router.post("/aggregate")
@@ -205,6 +232,20 @@ async def aggregate_signals(req: AggregateRequest):
     result["nearest_support"] = req.nearest_support
     result["nearest_resistance"] = req.nearest_resistance
 
+    # ScoringEngine 등급 산출 (OHLCV 데이터 필요)
+    try:
+        from src.services.market_data_service import MarketDataService
+        service = MarketDataService()
+        df = service.get_ohlcv(req.ticker, market=req.market)
+        if df is not None and len(df) >= 20:
+            engine = ScoringEngine(df)
+            score_result = engine.compute()
+            result["grade"] = score_result.get("grade")
+            result["scoring_confidence"] = score_result.get("confidence", {}).get("final")
+            result["risk_reward_ratio"] = score_result.get("risk_reward_ratio")
+    except Exception as e:
+        logger.warning(f"ScoringEngine grade failed for {req.ticker}: {e}")
+
     return {"success": True, "data": result}
 
 
@@ -228,10 +269,15 @@ async def save_recommendations(
 
         # Save each recommendation
         for rec in req.recommendations:
+            # Resolve name if it's empty or same as ticker
+            name = rec.name
+            if not name or name == rec.ticker:
+                name = _resolve_stock_name(rec.ticker, rec.market)
+
             recommendation = RecommendationModel(
                 pipeline_run_id=pipeline_run.id,
                 ticker=rec.ticker,
-                name=rec.name,
+                name=name,
                 market=rec.market,
                 current_price=rec.current_price,
                 action=rec.action,

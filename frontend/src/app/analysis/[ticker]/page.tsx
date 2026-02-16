@@ -25,12 +25,12 @@ export default function AnalysisPage({ params }: { params: Promise<{ ticker: str
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-bold">
-        {ticker} 기술적 분석
-        <span className="text-sm text-[var(--muted)] ml-2">{market}</span>
+        {analysis?.name || ticker} 기술적 분석
+        <span className="text-sm text-[var(--muted)] ml-2">({ticker}) {market}</span>
       </h1>
 
       <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4">
-        <CandlestickChart ticker={ticker} market={market} />
+        <CandlestickChart ticker={ticker} market={market} name={analysis?.name} />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

@@ -448,7 +448,7 @@ function SearchPage() {
 
           {/* ====== Candlestick Chart ====== */}
           <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4">
-            <CandlestickChart ticker={ticker} market={market} />
+            <CandlestickChart ticker={ticker} market={market} name={fin?.name} />
           </div>
 
           {/* ====== Financial Summary Table ====== */}

@@ -8,9 +8,10 @@ import { fetchOHLCV } from "@/lib/api";
 interface CandlestickChartProps {
   ticker: string;
   market: string;
+  name?: string;
 }
 
-export function CandlestickChart({ ticker, market }: CandlestickChartProps) {
+export function CandlestickChart({ ticker, market, name }: CandlestickChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
 
@@ -102,7 +103,7 @@ export function CandlestickChart({ ticker, market }: CandlestickChartProps) {
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
-        <h2 className="text-lg font-semibold">{ticker} 차트</h2>
+        <h2 className="text-lg font-semibold">{name || ticker} ({ticker}) 차트</h2>
         <span className="text-sm text-[var(--muted)]">{market}</span>
       </div>
       {isLoading && (
