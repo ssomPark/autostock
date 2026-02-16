@@ -252,7 +252,12 @@ function SearchPage() {
               {/* Confidence breakdown */}
               {sc.confidence.adjustments?.length > 0 && (
                 <div className="mt-4 pt-3 border-t border-[var(--card-border)]">
-                  <p className="text-xs text-[var(--muted)] mb-2">신뢰도 조정 내역</p>
+                  <p className="text-xs text-[var(--muted)] mb-2">
+                    신뢰도 조정 내역
+                    <span className="ml-2 text-[var(--foreground)]">
+                      기본 {sc.confidence.base.toFixed(0)}% → 최종 {sc.confidence.final.toFixed(0)}%
+                    </span>
+                  </p>
                   <div className="flex flex-wrap gap-2">
                     {sc.confidence.adjustments.map((a: { factor: string; delta: string }, i: number) => (
                       <span
@@ -300,6 +305,18 @@ function SearchPage() {
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ====== Analysis Summary ====== */}
+          {sc?.summary && sc.summary.length > 0 && (
+            <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-5">
+              <h2 className="text-lg font-semibold mb-3">분석 요약</h2>
+              <div className="space-y-2 text-sm leading-relaxed">
+                {sc.summary.map((line: string, i: number) => (
+                  <p key={i}>{line}</p>
+                ))}
+              </div>
             </div>
           )}
 

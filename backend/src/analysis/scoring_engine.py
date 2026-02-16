@@ -9,6 +9,8 @@ with additional indicators (ATR, RSI, EMA trend, Fibonacci) to produce:
 - Letter grade (A+ ~ F)
 """
 
+import math
+
 import numpy as np
 import pandas as pd
 from scipy.signal import argrelextrema
@@ -31,7 +33,7 @@ class ScoringEngine:
         "rsi": 0.15,
     }
 
-    def __init__(self, df: pd.DataFrame):
+    def __init__(self, df: pd.DataFrame, fundamentals: dict | None = None):
         self.df = df.copy()
         self.df.columns = [c.lower() for c in self.df.columns]
         self.close = self.df["close"].values.astype(float)
@@ -39,6 +41,7 @@ class ScoringEngine:
         self.low = self.df["low"].values.astype(float)
         self.volume = self.df["volume"].values.astype(float)
         self.current_price = self.close[-1]
+        self.fundamentals = fundamentals or {}
 
     # ------------------------------------------------------------------
     # Technical Indicators
@@ -225,28 +228,22 @@ class ScoringEngine:
         sr_data: dict,
         atr: float,
     ) -> dict:
-        """ATR-based stop loss + S/R confirmation."""
+        """ATR-based stop loss + S/R confirmation.
+
+        Always from long-holder perspective: stop loss is BELOW current price.
+        For SELL signals: "보유 중이라면 최소 이 가격에서는 매도하세요"
+        """
         price = self.current_price
 
-        # ATR-based stop (1.5× ATR)
-        if signal == "SELL":
-            atr_stop = price + 1.5 * atr
-        else:
-            atr_stop = price - 1.5 * atr
+        # ATR-based stop — always below current price (long-holder perspective)
+        atr_stop = price - 1.5 * atr
 
-        # S/R-based stop
-        sr_stop = None
-        if signal in ("BUY", "HOLD"):
-            sr_stop = sr_data.get("nearest_support")
-        else:
-            sr_stop = sr_data.get("nearest_resistance")
+        # Nearest support as stop reference
+        sr_stop = sr_data.get("nearest_support")
 
         # Choose the more conservative (closer to current price)
-        if sr_stop and sr_stop > 0:
-            if signal == "SELL":
-                stop = min(atr_stop, sr_stop)  # tighter stop for SELL = lower value
-            else:
-                stop = max(atr_stop, sr_stop)  # tighter stop for BUY = higher value
+        if sr_stop and 0 < sr_stop < price:
+            stop = max(atr_stop, sr_stop)
         else:
             stop = atr_stop
 
@@ -374,6 +371,15 @@ class ScoringEngine:
     # Enhanced Confidence
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _sigmoid_confidence(x: float, k: float = 8.0, midpoint: float = 0.3) -> float:
+        """Sigmoid-based base confidence mapping.
+
+        Maps total_score (typically 0~0.6) to confidence (0~100)
+        with an S-curve centred at *midpoint*.
+        """
+        return 100.0 / (1.0 + math.exp(-k * (abs(x) - midpoint)))
+
     def _enhanced_confidence(
         self,
         base_score: float,
@@ -381,9 +387,12 @@ class ScoringEngine:
         rsi: float,
         volume_data: dict,
         signal: str,
+        signals: dict,
+        atr: float,
     ) -> dict:
         """Multi-factor confidence with confirmation bonuses/penalties."""
-        base_confidence = min(abs(base_score) * 100, 100)
+        base_confidence = self._sigmoid_confidence(base_score)
+        sigmoid_base = base_confidence  # remember for display
         adjustments = []
 
         # --- Trend alignment ---
@@ -405,16 +414,36 @@ class ScoringEngine:
             base_confidence -= penalty
             adjustments.append({"factor": "역추세 매도", "delta": f"-{penalty:.0f}"})
 
-        # --- RSI confirmation ---
+        # --- RSI confirmation (extended neutral zone) ---
         if signal == "BUY" and rsi < 30:
             base_confidence += 8
             adjustments.append({"factor": f"RSI 과매도 ({rsi:.0f})", "delta": "+8"})
+        elif signal == "BUY" and 30 <= rsi <= 45:
+            bonus = round((45 - rsi) / 15 * 5, 1)
+            if bonus >= 0.5:
+                base_confidence += bonus
+                adjustments.append({"factor": f"RSI 과매도 접근 ({rsi:.0f})", "delta": f"+{bonus:.0f}"})
+        elif signal == "BUY" and 60 <= rsi <= 70:
+            penalty = round((rsi - 60) / 10 * 4, 1)
+            if penalty >= 0.5:
+                base_confidence -= penalty
+                adjustments.append({"factor": f"RSI 과매수 접근 ({rsi:.0f})", "delta": f"-{penalty:.0f}"})
         elif signal == "BUY" and rsi > 70:
             base_confidence -= 6
             adjustments.append({"factor": f"RSI 과매수 ({rsi:.0f})", "delta": "-6"})
         elif signal == "SELL" and rsi > 70:
             base_confidence += 8
             adjustments.append({"factor": f"RSI 과매수 ({rsi:.0f})", "delta": "+8"})
+        elif signal == "SELL" and 55 <= rsi <= 70:
+            bonus = round((rsi - 55) / 15 * 5, 1)
+            if bonus >= 0.5:
+                base_confidence += bonus
+                adjustments.append({"factor": f"RSI 과매수 접근 ({rsi:.0f})", "delta": f"+{bonus:.0f}"})
+        elif signal == "SELL" and 30 <= rsi <= 40:
+            penalty = round((40 - rsi) / 10 * 4, 1)
+            if penalty >= 0.5:
+                base_confidence -= penalty
+                adjustments.append({"factor": f"RSI 과매도 접근 ({rsi:.0f})", "delta": f"-{penalty:.0f}"})
         elif signal == "SELL" and rsi < 30:
             base_confidence -= 6
             adjustments.append({"factor": f"RSI 과매도 ({rsi:.0f})", "delta": "-6"})
@@ -430,13 +459,129 @@ class ScoringEngine:
             base_confidence -= 5
             adjustments.append({"factor": "가격-거래량 다이버전스", "delta": "-5"})
 
+        # --- Signal Consensus (신호 일치도) ---
+        core_keys = ["candlestick", "chart_pattern", "support_resistance", "volume"]
+        core_strengths = [signals.get(k, 0) for k in core_keys]
+        non_zero = [s for s in core_strengths if s != 0]
+        if len(non_zero) >= 2:
+            if signal == "BUY":
+                aligned = sum(1 for s in non_zero if s > 0)
+            elif signal == "SELL":
+                aligned = sum(1 for s in non_zero if s < 0)
+            else:
+                aligned = 0
+            ratio = aligned / len(non_zero) if non_zero else 0
+
+            if len(non_zero) >= 3 and ratio >= 1.0:
+                base_confidence += 12
+                adjustments.append({"factor": f"신호 전원 일치 ({aligned}/{len(non_zero)})", "delta": "+12"})
+            elif len(non_zero) >= 3 and ratio >= 0.75:
+                base_confidence += 7
+                adjustments.append({"factor": f"신호 수렴 ({aligned}/{len(non_zero)})", "delta": "+7"})
+            elif len(non_zero) >= 2 and ratio >= 0.75:
+                base_confidence += 4
+                adjustments.append({"factor": f"신호 일치 ({aligned}/{len(non_zero)})", "delta": "+4"})
+            elif ratio < 0.5:
+                base_confidence -= 5
+                adjustments.append({"factor": "신호 혼재", "delta": "-5"})
+
+        # --- ATR-based volatility adjustment ---
+        atr_pct = (atr / self.current_price * 100) if self.current_price > 0 else 0
+        if atr_pct > 5.0:
+            penalty = min(round((atr_pct - 5.0) / 3.0 * 8, 1), 8)
+            base_confidence -= penalty
+            adjustments.append({"factor": f"고변동성 ({atr_pct:.1f}%)", "delta": f"-{penalty:.0f}"})
+        elif atr_pct > 3.0:
+            penalty = min(round((atr_pct - 3.0) / 2.0 * 3, 1), 3)
+            base_confidence -= penalty
+            adjustments.append({"factor": f"변동성 주의 ({atr_pct:.1f}%)", "delta": f"-{penalty:.0f}"})
+        elif atr_pct < 1.0:
+            bonus = min(round((1.0 - atr_pct) * 4, 1), 4)
+            if bonus >= 0.5:
+                base_confidence += bonus
+                adjustments.append({"factor": f"저변동성 ({atr_pct:.1f}%)", "delta": f"+{bonus:.0f}"})
+
+        # --- Fundamental adjustment ---
+        fund_adj = self._fundamental_adjustment(signal)
+        for adj in fund_adj:
+            base_confidence += adj["value"]
+            sign = "+" if adj["value"] > 0 else ""
+            adjustments.append({"factor": adj["factor"], "delta": f"{sign}{adj['value']:.0f}"})
+
         final_confidence = max(5, min(95, base_confidence))
 
         return {
-            "base": round(min(abs(base_score) * 100, 100), 1),
+            "base": round(sigmoid_base, 1),
             "final": round(final_confidence, 1),
             "adjustments": adjustments,
         }
+
+    # ------------------------------------------------------------------
+    # Fundamental Adjustment
+    # ------------------------------------------------------------------
+
+    def _fundamental_adjustment(self, signal: str) -> list[dict]:
+        """Adjust confidence based on fundamental data (optional)."""
+        if not self.fundamentals:
+            return []
+
+        adjustments = []
+        f = self.fundamentals
+
+        # --- Analyst target price ---
+        target_mean = f.get("targetMeanPrice")
+        if target_mean and target_mean > 0 and self.current_price > 0:
+            upside = (target_mean - self.current_price) / self.current_price
+            if signal == "BUY" and upside >= 0.15:
+                bonus = min(round(upside / 0.15 * 8, 1), 8)
+                adjustments.append({"factor": f"목표가 상방 ({upside * 100:.0f}%)", "value": bonus})
+            elif signal == "BUY" and upside <= -0.15:
+                penalty = min(round(abs(upside) / 0.15 * 6, 1), 6)
+                adjustments.append({"factor": f"목표가 하방 ({upside * 100:.0f}%)", "value": -penalty})
+            elif signal == "SELL" and upside <= -0.15:
+                bonus = min(round(abs(upside) / 0.15 * 8, 1), 8)
+                adjustments.append({"factor": f"목표가 하방 ({upside * 100:.0f}%)", "value": bonus})
+            elif signal == "SELL" and upside >= 0.15:
+                penalty = min(round(upside / 0.15 * 6, 1), 6)
+                adjustments.append({"factor": f"목표가 상방 ({upside * 100:.0f}%)", "value": -penalty})
+
+        # --- Analyst recommendation ---
+        rec = f.get("recommendationKey", "").lower()
+        if rec:
+            buy_recs = ("strong_buy", "buy")
+            sell_recs = ("strong_sell", "sell", "underperform")
+            if signal == "BUY" and rec in buy_recs:
+                adjustments.append({"factor": f"애널리스트 추천 일치 ({rec})", "value": 5})
+            elif signal == "BUY" and rec in sell_recs:
+                adjustments.append({"factor": f"애널리스트 추천 불일치 ({rec})", "value": -4})
+            elif signal == "SELL" and rec in sell_recs:
+                adjustments.append({"factor": f"애널리스트 추천 일치 ({rec})", "value": 5})
+            elif signal == "SELL" and rec in buy_recs:
+                adjustments.append({"factor": f"애널리스트 추천 불일치 ({rec})", "value": -4})
+
+        # --- Earnings growth ---
+        earnings_growth = f.get("earningsGrowth")
+        if earnings_growth is not None:
+            if signal == "BUY" and earnings_growth >= 0.10:
+                bonus = min(round(earnings_growth / 0.10 * 5, 1), 5)
+                adjustments.append({"factor": f"이익 성장 ({earnings_growth * 100:.0f}%)", "value": bonus})
+            elif signal == "BUY" and earnings_growth <= -0.10:
+                penalty = min(round(abs(earnings_growth) / 0.10 * 4, 1), 4)
+                adjustments.append({"factor": f"이익 감소 ({earnings_growth * 100:.0f}%)", "value": -penalty})
+            elif signal == "SELL" and earnings_growth <= -0.10:
+                bonus = min(round(abs(earnings_growth) / 0.10 * 5, 1), 5)
+                adjustments.append({"factor": f"이익 감소 ({earnings_growth * 100:.0f}%)", "value": bonus})
+            elif signal == "SELL" and earnings_growth >= 0.10:
+                penalty = min(round(earnings_growth / 0.10 * 4, 1), 4)
+                adjustments.append({"factor": f"이익 성장 ({earnings_growth * 100:.0f}%)", "value": -penalty})
+
+        # --- Short interest ---
+        short_pct = f.get("shortPercentOfFloat")
+        if short_pct is not None and short_pct >= 0.10:
+            if signal == "BUY":
+                adjustments.append({"factor": f"공매도 비율 높음 ({short_pct * 100:.0f}%)", "value": 5})
+
+        return adjustments
 
     # ------------------------------------------------------------------
     # Grade Assignment
@@ -467,6 +612,213 @@ class ScoringEngine:
         if score >= 25:
             return "D"
         return "F"
+
+    # ------------------------------------------------------------------
+    # Summary Generation
+    # ------------------------------------------------------------------
+
+    def _generate_summary(
+        self,
+        signal: str,
+        trend: dict,
+        rsi: float,
+        atr: float,
+        entry_price: dict,
+        targets: dict,
+        stop_loss: dict,
+        rr_ratio: float | None,
+        candlestick: dict,
+        chart_pattern: dict,
+        volume: dict,
+        signals: dict,
+    ) -> list[str]:
+        """Generate Korean narrative summary from analysis results."""
+        f = self.fundamentals
+        price = self.current_price
+        name = f.get("shortName") or "종목"
+        sector = f.get("sector")
+        is_kr = f.get("market", "").upper().startswith("KOS")
+        currency = "원" if is_kr else "달러"
+
+        def fmt(p):
+            if p is None or p == 0:
+                return "-"
+            if is_kr:
+                return f"{p:,.0f}{currency}"
+            return f"{p:,.2f}{currency}"
+
+        lines = []
+
+        # ── P1: 현황 ──
+        name_part = f"{name}({sector})" if sector else name
+        trend_dir = trend["direction"]
+        trend_str = trend["strength"]
+
+        if trend_dir == "uptrend":
+            adj = "강한 " if trend_str >= 0.7 else ""
+            trend_desc = f"{adj}상승 추세(강도 {trend_str * 100:.0f}%)에 있습니다"
+        elif trend_dir == "downtrend":
+            adj = "강한 " if trend_str >= 0.7 else ""
+            trend_desc = f"{adj}하락 추세(강도 {trend_str * 100:.0f}%)에 있습니다"
+        else:
+            trend_desc = "횡보 추세입니다"
+
+        ema20_pct = trend["price_vs_ema20_pct"]
+        ema50_pct = trend["price_vs_ema50_pct"]
+        e20 = f"{'+'if ema20_pct >= 0 else ''}{ema20_pct}%"
+        e50 = f"{'+'if ema50_pct >= 0 else ''}{ema50_pct}%"
+
+        if ema20_pct >= 0 and ema50_pct >= 0:
+            ema_desc = f"EMA20({e20})과 EMA50({e50}) 위에서 거래되고 있습니다."
+        elif ema20_pct < 0 and ema50_pct < 0:
+            ema_desc = f"EMA20({e20})과 EMA50({e50}) 아래에서 약세를 보이고 있습니다."
+        else:
+            ema_desc = f"EMA20({e20}), EMA50({e50}) 부근에서 거래되고 있습니다."
+
+        lines.append(
+            f"{name_part}는 현재 {fmt(price)}에 거래 중이며, {trend_desc}. {ema_desc}"
+        )
+
+        # ── P2: 기술적 신호 ──
+        all_patterns = []
+        for p in candlestick.get("patterns") or []:
+            pn = p.get("pattern_korean") or p.get("pattern_name", "")
+            all_patterns.append(f"{pn}({p.get('confidence', 0)}%)")
+        for p in chart_pattern.get("patterns") or []:
+            pn = p.get("pattern_korean") or p.get("pattern_name", "")
+            all_patterns.append(f"{pn}({p.get('confidence', 0)}%)")
+
+        parts = []
+        if all_patterns:
+            pat_str = ", ".join(all_patterns[:4])
+            if len(all_patterns) > 4:
+                pat_str += f" 외 {len(all_patterns) - 4}건"
+            if signal == "BUY":
+                parts.append(f"{pat_str} 패턴이 감지되어 매수 신호를 형성하고 있습니다")
+            elif signal == "SELL":
+                parts.append(f"{pat_str} 패턴이 감지되어 강한 매도 신호를 형성하고 있습니다")
+            else:
+                parts.append(f"{pat_str} 패턴이 감지되었습니다")
+
+        vol_signal = volume.get("obv_signal", "HOLD")
+        if vol_signal == signal and signal != "HOLD":
+            dir_kr = "매수" if signal == "BUY" else "매도"
+            parts.append(f"거래량도 {dir_kr} 방향을 지지합니다")
+
+        # Signal consensus
+        core_keys = ["candlestick", "chart_pattern", "support_resistance", "volume"]
+        non_zero = [signals.get(k, 0) for k in core_keys if signals.get(k, 0) != 0]
+        if len(non_zero) >= 3:
+            if signal == "BUY":
+                aligned = sum(1 for s in non_zero if s > 0)
+            elif signal == "SELL":
+                aligned = sum(1 for s in non_zero if s < 0)
+            else:
+                aligned = 0
+            if aligned == len(non_zero) and aligned >= 3:
+                dir_kr = "상승" if signal == "BUY" else "하락"
+                parts.append(f"{aligned}개 핵심 신호가 전원 {dir_kr} 방향으로 일치합니다")
+
+        # Warnings
+        warnings = []
+        if 65 <= rsi <= 70:
+            warnings.append(f"RSI({rsi:.0f})가 과매수 구간에 접근 중")
+        elif rsi > 70:
+            warnings.append(f"RSI({rsi:.0f})가 과매수 구간")
+        elif 30 <= rsi <= 35:
+            warnings.append(f"RSI({rsi:.0f})가 과매도 구간에 접근 중")
+        elif rsi < 30:
+            warnings.append(f"RSI({rsi:.0f})가 과매도 구간")
+
+        if volume.get("price_volume_divergence"):
+            warnings.append("가격-거래량 다이버전스가 관찰")
+
+        atr_pct = (atr / price * 100) if price > 0 else 0
+        if atr_pct > 5.0:
+            warnings.append(f"변동성({atr_pct:.1f}%)이 매우 높아 주의 필요")
+        elif atr_pct > 3.0:
+            warnings.append(f"변동성({atr_pct:.1f}%)이 다소 높아 주의 필요")
+
+        p2 = ""
+        if parts:
+            p2 = ". ".join(parts)
+            if warnings:
+                p2 += f". 다만 {'이며 '.join(warnings[:2])}되어 단기 조정 가능성에 유의하세요."
+            else:
+                p2 += "."
+        elif warnings:
+            p2 = f"{'이며 '.join(warnings[:2])}되어 주의가 필요합니다."
+        else:
+            p2 = "특별한 기술적 신호가 감지되지 않았습니다."
+
+        lines.append(p2)
+
+        # ── P3: 펀더멘탈 (optional) ──
+        fund_parts = []
+        eg = f.get("earningsGrowth")
+        if eg is not None:
+            eg_pct = eg * 100
+            if eg_pct >= 50:
+                fund_parts.append(f"이익 성장률 {eg_pct:.0f}%로 강한 실적 개선이 확인됩니다")
+            elif eg_pct >= 10:
+                fund_parts.append(f"이익 성장률 {eg_pct:.0f}%로 실적 개선이 확인됩니다")
+            elif eg_pct <= -10:
+                fund_parts.append(f"이익 성장률 {eg_pct:.0f}%로 실적 악화가 우려됩니다")
+
+        rec = f.get("recommendationKey", "")
+        if rec:
+            rec_lower = rec.lower()
+            buy_recs = ("strong_buy", "buy")
+            sell_recs = ("strong_sell", "sell", "underperform")
+            if signal == "BUY" and rec_lower in sell_recs:
+                fund_parts.append(f"애널리스트 추천은 {rec}로 기술적 신호와 불일치합니다")
+            elif signal == "SELL" and rec_lower in buy_recs:
+                # Earnings context — combine into one sentence to avoid duplication
+                if eg is not None and eg > 0:
+                    fund_parts = [p for p in fund_parts if "이익 성장률" not in p]
+                    fund_parts.append(
+                        f"애널리스트 추천은 {rec}로 기술적 신호와 불일치하며, "
+                        f"이익 성장률 {eg * 100:.0f}%에도 불구하고 차트상 하락 압력이 우세합니다"
+                    )
+                else:
+                    fund_parts.append(f"애널리스트 추천은 {rec}로 기술적 신호와 불일치합니다")
+
+        target_mean = f.get("targetMeanPrice")
+        if target_mean and target_mean > 0 and price > 0:
+            upside = (target_mean - price) / price * 100
+            if abs(upside) >= 10:
+                fund_parts.append(f"애널리스트 목표가 {fmt(target_mean)}(괴리율 {upside:+.0f}%)")
+
+        if fund_parts:
+            lines.append(". ".join(fund_parts) + ".")
+
+        # ── P4: 매매 가이드 ──
+        entry = entry_price.get("consensus")
+        target_p = targets.get("consensus")
+        stop = stop_loss.get("final")
+        disc = entry_price.get("discount_pct", 0)
+
+        p4 = []
+        if entry:
+            p4.append(f"추천 진입가 {fmt(entry)}(-{disc}%)")
+        if signal == "SELL" and target_p:
+            p4.append(f"예상 하락 목표 {fmt(target_p)}")
+        elif target_p:
+            p4.append(f"목표가 {fmt(target_p)}")
+        if stop:
+            p4.append(f"손절가 {fmt(stop)}")
+        if rr_ratio is not None:
+            # Append R:R to last item
+            rr_str = f"(R:R {rr_ratio}:1)"
+            if p4:
+                p4[-1] = f"{p4[-1]} {rr_str}"
+            else:
+                p4.append(rr_str)
+
+        if p4:
+            lines.append(", ".join(p4) + ".")
+
+        return lines
 
     # ------------------------------------------------------------------
     # Main Entry Point
@@ -532,10 +884,29 @@ class ScoringEngine:
         )
 
         # 7. Enhanced confidence
-        confidence = self._enhanced_confidence(total_score, trend, rsi, volume, signal)
+        confidence = self._enhanced_confidence(
+            total_score, trend, rsi, volume, signal,
+            signals=signals, atr=atr,
+        )
 
         # 8. Grade
         grade = self._assign_grade(confidence["final"], rr_ratio)
+
+        # 9. Summary
+        summary = self._generate_summary(
+            signal=signal,
+            trend=trend,
+            rsi=rsi,
+            atr=atr,
+            entry_price=entry_price,
+            targets=targets,
+            stop_loss=stop_loss,
+            rr_ratio=rr_ratio,
+            candlestick=candlestick,
+            chart_pattern=chart_pattern,
+            volume=volume,
+            signals=signals,
+        )
 
         return {
             "signal": signal,
@@ -546,6 +917,7 @@ class ScoringEngine:
             "target": targets,
             "stop_loss": stop_loss,
             "risk_reward_ratio": rr_ratio,
+            "summary": summary,
             "indicators": {
                 "atr": round(atr, 2),
                 "atr_pct": round(atr / self.current_price * 100, 2),

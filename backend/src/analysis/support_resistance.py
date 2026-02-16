@@ -145,10 +145,10 @@ class SupportResistanceDetector:
         if s_dist is not None and r_dist is not None:
             if s_dist < 2.0:
                 signal = "BUY"
-                strength = min(0.8, (2.0 - s_dist) / 2.0)
+                strength = min(1.0, (2.0 - s_dist) / 2.0)
             elif r_dist < 2.0:
                 signal = "SELL"
-                strength = -min(0.8, (2.0 - r_dist) / 2.0)
+                strength = -min(1.0, (2.0 - r_dist) / 2.0)
             else:
                 ratio = s_dist / (s_dist + r_dist)
                 strength = (0.5 - ratio) * 2

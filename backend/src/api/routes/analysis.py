@@ -140,11 +140,33 @@ async def get_score(
         df = _get_ohlcv_with_fallback(ticker, market)
         if df.empty:
             return {"success": False, "message": f"No data available for {ticker}"}
-        result = _sanitize(ScoringEngine(df).compute())
+
+        # Fetch fundamental data for confidence adjustment
+        fundamentals = _get_fundamentals(ticker, market)
+        result = _sanitize(ScoringEngine(df, fundamentals=fundamentals).compute())
         return {"success": True, "data": result}
     except Exception as e:
         logger.error(f"Scoring failed for {ticker}: {e}")
         return {"success": False, "message": str(e)}
+
+
+def _get_fundamentals(ticker: str, market: str) -> dict:
+    """Extract fundamental data from yfinance for confidence adjustment."""
+    try:
+        yf_ticker = _kr_ticker_to_yf(ticker, market)
+        info = yf.Ticker(yf_ticker).info or {}
+        return {
+            "targetMeanPrice": info.get("targetMeanPrice"),
+            "recommendationKey": info.get("recommendationKey"),
+            "shortPercentOfFloat": info.get("shortPercentOfFloat"),
+            "earningsGrowth": info.get("earningsGrowth"),
+            "shortName": info.get("shortName") or info.get("longName"),
+            "sector": info.get("sector"),
+            "market": market,
+        }
+    except Exception as e:
+        logger.warning(f"Failed to fetch fundamentals for {ticker}: {e}")
+        return {}
 
 
 def _get_ohlcv_with_fallback(ticker: str, market: str) -> pd.DataFrame:

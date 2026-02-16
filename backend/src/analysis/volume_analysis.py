@@ -125,7 +125,7 @@ class VolumeAnalyzer:
             score *= 1.5
 
         if result["price_volume_divergence"]:
-            score *= -0.5
+            score *= 0.5
 
         if result["volume_trend"] == "increasing":
             score += 0.1
