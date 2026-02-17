@@ -6,7 +6,7 @@ description: OAuth 인증, JWT, DB 모델 제약, Route 인증 패턴, CORS 설�
 ## Purpose
 
 1. **JWT 토큰 계약 검증** — access/refresh 토큰의 claim 구조, 만료 시간, 타입 필드가 올바른지 확인
-2. **OAuth Provider 제약 검증** — ALLOWED_PROVIDERS가 {"google", "github"}으로 고정되어 있고, 콜백 URL 패턴이 올바른지 확인
+2. **OAuth Provider 제약 검증** — ALLOWED_PROVIDERS가 {"google"}으로 고정되어 있고, 콜백 URL 패턴이 올바른지 확인
 3. **DB 모델 제약 검증** — UserModel, WatchlistItemModel, SavedAnalysisModel의 unique index, FK, cascade 규칙이 유지되는지 확인
 4. **Route 인증 패턴 검증** — 보호 라우트에 `get_current_user` 의존성이 있고, 공개 라우트에 불필요한 인증이 없는지 확인
 5. **CORS/Middleware 설정 검증** — allow_credentials=True, SessionMiddleware 존재, 올바른 origin 허용 확인
@@ -15,7 +15,7 @@ description: OAuth 인증, JWT, DB 모델 제약, Route 인증 패턴, CORS 설�
 ## When to Run
 
 - `backend/src/auth/*.py` 수정 후
-- `backend/src/api/routes/auth.py`, `watchlist.py`, `saved_analysis.py` 수정 후
+- `backend/src/api/routes/auth.py`, `watchlist.py`, `saved_analysis.py`, `paper_trading.py` 수정 후
 - `backend/src/models/db_models.py`에서 UserModel, WatchlistItemModel, SavedAnalysisModel 수정 후
 - `backend/src/api/app.py`에서 미들웨어 또는 라우터 등록 수정 후
 - `frontend/src/lib/api.ts` 또는 `auth-context.tsx`에서 인증 관련 로직 수정 후
@@ -26,7 +26,7 @@ description: OAuth 인증, JWT, DB 모델 제약, Route 인증 패턴, CORS 설�
 |------|---------|
 | `backend/src/auth/jwt.py` | JWT 토큰 생성/검증 (create_access_token, create_refresh_token, decode_token) |
 | `backend/src/auth/dependencies.py` | FastAPI 인증 의존성 (get_current_user, get_current_user_optional) |
-| `backend/src/auth/oauth.py` | authlib OAuth 클라이언트 등록 (Google OIDC, GitHub OAuth) |
+| `backend/src/auth/oauth.py` | authlib OAuth 클라이언트 등록 (Google OIDC) |
 | `backend/src/api/routes/auth.py` | 인증 엔드포인트 5개 (login, callback, refresh, me, logout) |
 | `backend/src/api/routes/watchlist.py` | 워치리스트 CRUD 3개 (인증 필수) |
 | `backend/src/api/routes/saved_analysis.py` | 분석 저장 CRUD 4개 (인증 필수) |
@@ -36,6 +36,9 @@ description: OAuth 인증, JWT, DB 모델 제약, Route 인증 패턴, CORS 설�
 | `frontend/src/lib/api.ts` | fetchWithAuth (Bearer 헤더, 401 자동 리프레시, credentials:include) |
 | `frontend/src/lib/auth-context.tsx` | AuthProvider (토큰 저장, 세션 복원, 로그인/로그아웃 흐름) |
 | `frontend/src/lib/watchlist.ts` | 하이브리드 워치리스트 (로그인 시 API, 비로그인 시 localStorage) |
+| `backend/src/api/routes/paper_trading.py` | 모의 투자 CRUD 10개 (인증 필수) |
+| `frontend/src/app/auth/callback/page.tsx` | OAuth 콜백 처리 (토큰 수신 + AuthProvider 연동) |
+| `frontend/src/app/auth/login/page.tsx` | 로그인 페이지 (Google 로그인 버튼) |
 
 ## Workflow
 
@@ -82,7 +85,7 @@ cd "I:\Project\AutoStock" && grep -n "jwt_access_token_expire_minutes\|jwt_refre
 
 **파일:** `backend/src/api/routes/auth.py`
 
-**검사:** `ALLOWED_PROVIDERS`가 `{"google", "github"}`로 고정되어 있어야 합니다.
+**검사:** `ALLOWED_PROVIDERS`가 `{"google"}`로 고정되어 있어야 합니다.
 
 ```bash
 cd "I:\Project\AutoStock" && python -c "
@@ -95,11 +98,11 @@ for node in ast.walk(tree):
             if isinstance(t, ast.Name) and t.id == 'ALLOWED_PROVIDERS':
                 if isinstance(node.value, ast.Set):
                     vals = {elt.value for elt in node.value.elts if isinstance(elt, ast.Constant)}
-                    if vals == {'google', 'github'}:
+                    if vals == {'google'}:
                         print(f'PASS: ALLOWED_PROVIDERS = {vals}')
                         sys.exit(0)
                     else:
-                        print(f'FAIL: ALLOWED_PROVIDERS = {vals} (expected google, github)')
+                        print(f'FAIL: ALLOWED_PROVIDERS = {vals} (expected google)')
                         sys.exit(1)
 print('FAIL: ALLOWED_PROVIDERS not found')
 sys.exit(1)
@@ -153,14 +156,14 @@ cd "I:\Project\AutoStock" && grep -n "cascade\|ondelete" backend/src/models/db_m
 
 ### Step 6: 보호 라우트 인증 의존성 검증
 
-**파일:** `backend/src/api/routes/watchlist.py`, `backend/src/api/routes/saved_analysis.py`
+**파일:** `backend/src/api/routes/watchlist.py`, `backend/src/api/routes/saved_analysis.py`, `backend/src/api/routes/paper_trading.py`
 
 **검사:** 모든 엔드포인트에 `get_current_user` 의존성이 있어야 합니다.
 
 ```bash
 cd "I:\Project\AutoStock" && python -c "
 import re, sys
-files = ['backend/src/api/routes/watchlist.py', 'backend/src/api/routes/saved_analysis.py']
+files = ['backend/src/api/routes/watchlist.py', 'backend/src/api/routes/saved_analysis.py', 'backend/src/api/routes/paper_trading.py']
 for f in files:
     with open(f, encoding='utf-8') as fh:
         content = fh.read()
@@ -207,11 +210,11 @@ cd "I:\Project\AutoStock" && grep -n "SessionMiddleware" backend/src/api/app.py
 
 **위반:** SessionMiddleware가 없으면 OAuth 로그인 시 state 파라미터 검증이 실패하여 CSRF 공격에 취약해집니다.
 
-### Step 9: Auth/Watchlist/SavedAnalysis 라우터 등록 검증
+### Step 9: Auth/Watchlist/SavedAnalysis/PaperTrading 라우터 등록 검증
 
 **파일:** `backend/src/api/app.py`
 
-**검사:** 세 라우터가 모두 올바른 prefix로 등록되어야 합니다.
+**검사:** 네 라우터가 모두 올바른 prefix로 등록되어야 합니다.
 
 ```bash
 cd "I:\Project\AutoStock" && python -c "
@@ -222,6 +225,7 @@ required = [
     ('/api/auth', 'auth.router'),
     ('/api/watchlist', 'watchlist.router'),
     ('/api/saved-analyses', 'saved_analysis.router'),
+    ('/api/paper', 'paper_trading.router'),
 ]
 missing = []
 for prefix, router in required:
@@ -292,7 +296,7 @@ cd "I:\Project\AutoStock" && grep -n "isLoggedIn\|getAccessToken\|localStorage\|
 
 ### Step 13: FastAPI 라우트 핸들러 튜플 반환 금지 검증
 
-**파일:** `backend/src/api/routes/auth.py`, `backend/src/api/routes/watchlist.py`, `backend/src/api/routes/saved_analysis.py`
+**파일:** `backend/src/api/routes/auth.py`, `backend/src/api/routes/watchlist.py`, `backend/src/api/routes/saved_analysis.py`, `backend/src/api/routes/paper_trading.py`
 
 **검사:** FastAPI 라우트에서 `return {...}, status_code` 형태의 튜플 반환을 사용하면 안 됩니다. FastAPI는 튜플을 HTTP 상태코드로 해석하지 않고 JSON 배열로 직렬화하여 항상 HTTP 200을 반환합니다. 올바른 방법은 `JSONResponse(content={...}, status_code=N)` 또는 `raise HTTPException(status_code=N)`입니다.
 
@@ -303,6 +307,7 @@ files = [
     'backend/src/api/routes/auth.py',
     'backend/src/api/routes/watchlist.py',
     'backend/src/api/routes/saved_analysis.py',
+    'backend/src/api/routes/paper_trading.py',
 ]
 violations = []
 # Pattern: return {something}, <number> — tuple return with status code
@@ -331,7 +336,7 @@ print('PASS: No tuple return patterns in auth-related routes')
 |---|----------|------|------|
 | 1 | JWT 토큰 타입 필드 | PASS/FAIL | access/refresh type 존재 여부 |
 | 2 | JWT 만료 시간 설정 | PASS/FAIL | expire_minutes, expire_days |
-| 3 | OAuth ALLOWED_PROVIDERS | PASS/FAIL | {google, github} |
+| 3 | OAuth ALLOWED_PROVIDERS | PASS/FAIL | {google} |
 | 4 | DB Unique Index | PASS/FAIL | email, provider+id, user+ticker |
 | 5 | DB Cascade 삭제 | PASS/FAIL | cascade, ondelete |
 | 6 | 보호 라우트 인증 | PASS/FAIL | endpoint 수 vs auth 수 |
