@@ -168,44 +168,49 @@ class ScoringEngine:
         chart_pattern_data: dict,
         atr: float,
         fib: dict,
+        base_price: float | None = None,
     ) -> dict:
-        """Calculate target prices from multiple methods and produce consensus."""
-        price = self.current_price
+        """Calculate target prices (always upside from base).
+
+        BUY/HOLD: base = current_price (상승 목표).
+        SELL: base = entry_price (매수 후 수익 실현 목표).
+        """
+        price = base_price if base_price is not None else self.current_price
         methods = []
 
-        # Method 1: Support / Resistance
-        sr_target = None
-        if signal in ("BUY", "HOLD"):
-            sr_target = sr_data.get("nearest_resistance")
-        else:
-            sr_target = sr_data.get("nearest_support")
-        if sr_target and sr_target > 0:
+        # Method 1: nearest resistance above base
+        sr_target = sr_data.get("nearest_resistance")
+        if sr_target and sr_target > price:
             methods.append({"method": "S/R", "price": round(sr_target, 2)})
 
-        # Method 2: ATR-based (2× ATR projection)
+        # Method 2: ATR-based (2× ATR upside from base)
         if atr > 0:
-            if signal == "SELL":
-                atr_target = price - 2.0 * atr
-            else:
-                atr_target = price + 2.0 * atr
+            atr_target = price + 2.0 * atr
             methods.append({"method": "ATR(2x)", "price": round(atr_target, 2)})
 
-        # Method 3: Fibonacci extension / retracement
+        # Method 3: Fibonacci
         fib_levels = fib.get("levels", {})
-        if signal in ("BUY", "HOLD"):
+        if base_price is not None:
+            # SELL: nearest fib level above entry (conservative recovery target)
+            best_fib, best_name = None, None
+            for name in ("0.236", "0.382", "0.5", "0.618"):
+                level = fib_levels.get(name)
+                if level and level > price:
+                    if best_fib is None or level < best_fib:
+                        best_fib, best_name = level, name
+            if best_fib:
+                methods.append({"method": f"Fib {best_name}", "price": round(best_fib, 2)})
+        else:
+            # BUY/HOLD: extension levels
             ext = fib_levels.get("ext_1.272")
             if ext and ext > price:
                 methods.append({"method": "Fib 1.272", "price": round(ext, 2)})
             elif fib_levels.get("0.0") and fib_levels["0.0"] > price:
                 methods.append({"method": "Fib 0.0 (Swing High)", "price": round(fib_levels["0.0"], 2)})
-        else:
-            ret618 = fib_levels.get("0.618")
-            if ret618 and ret618 < price:
-                methods.append({"method": "Fib 0.618", "price": round(ret618, 2)})
 
-        # Method 4: Chart pattern target
+        # Method 4: Chart pattern target (above base)
         cp_target = chart_pattern_data.get("target_price")
-        if cp_target and cp_target > 0:
+        if cp_target and cp_target > price:
             methods.append({"method": "Pattern", "price": round(cp_target, 2)})
 
         # Consensus: median of all methods
@@ -213,8 +218,7 @@ class ScoringEngine:
             prices = [m["price"] for m in methods]
             consensus = round(float(np.median(prices)), 2)
         else:
-            # Fallback: ATR-based if no methods
-            consensus = round(price + (2.0 * atr if signal != "SELL" else -2.0 * atr), 2)
+            consensus = round(price + 2.0 * atr, 2)
 
         return {
             "methods": methods,
@@ -227,23 +231,20 @@ class ScoringEngine:
         signal: str,
         sr_data: dict,
         atr: float,
+        base_price: float | None = None,
     ) -> dict:
-        """ATR-based stop loss + S/R confirmation.
+        """ATR-based stop loss + S/R confirmation (always below base).
 
-        Always from long-holder perspective: stop loss is BELOW current price.
-        For SELL signals: "보유 중이라면 최소 이 가격에서는 매도하세요"
+        BUY/HOLD: base = current_price.
+        SELL: base = entry_price (매수 후 추가 하락 시 손절).
         """
-        price = self.current_price
+        price = base_price if base_price is not None else self.current_price
 
-        # ATR-based stop — always below current price (long-holder perspective)
         atr_stop = price - 1.5 * atr
-
-        # Nearest support as stop reference
         sr_stop = sr_data.get("nearest_support")
 
-        # Choose the more conservative (closer to current price)
         if sr_stop and 0 < sr_stop < price:
-            stop = max(atr_stop, sr_stop)
+            stop = max(atr_stop, sr_stop)  # 더 보수적 (base에 가까운 쪽)
         else:
             stop = atr_stop
 
@@ -358,11 +359,14 @@ class ScoringEngine:
 
     @staticmethod
     def _calculate_risk_reward(
-        price: float, target: float, stop: float
+        entry: float, target: float, stop: float
     ) -> float | None:
-        """Risk/Reward ratio. > 1.0 means reward > risk."""
-        reward = abs(target - price)
-        risk = abs(price - stop)
+        """Risk/Reward ratio from buyer's perspective. > 1.0 means reward > risk.
+
+        Always: reward = target - entry (upside), risk = entry - stop (downside).
+        """
+        reward = abs(target - entry)
+        risk = abs(entry - stop)
         if risk == 0:
             return None
         return round(reward / risk, 2)
@@ -801,9 +805,7 @@ class ScoringEngine:
         p4 = []
         if entry:
             p4.append(f"추천 진입가 {fmt(entry)}(-{disc}%)")
-        if signal == "SELL" and target_p:
-            p4.append(f"예상 하락 목표 {fmt(target_p)}")
-        elif target_p:
+        if target_p:
             p4.append(f"목표가 {fmt(target_p)}")
         if stop:
             p4.append(f"손절가 {fmt(stop)}")
@@ -875,13 +877,28 @@ class ScoringEngine:
         else:
             signal = "HOLD"
 
-        # 6. Targets, stop-loss, entry price, R:R
-        targets = self._calculate_targets(signal, sr, chart_pattern, atr, fib)
-        stop_loss = self._calculate_stop_loss(signal, sr, atr)
+        # 6. Entry price first, then targets/stop
         entry_price = self._calculate_entry_price(signal, sr, atr, trend, fib)
-        rr_ratio = self._calculate_risk_reward(
-            self.current_price, targets["consensus"], stop_loss["final"]
-        )
+        entry_consensus = entry_price["consensus"]
+
+        if signal == "SELL":
+            # SELL: 매수 추천가 기준으로 목표/손절 계산 (매수자 관점)
+            targets = self._calculate_targets(
+                signal, sr, chart_pattern, atr, fib, base_price=entry_consensus
+            )
+            stop_loss = self._calculate_stop_loss(
+                signal, sr, atr, base_price=entry_consensus
+            )
+            rr_ratio = self._calculate_risk_reward(
+                entry_consensus, targets["consensus"], stop_loss["final"]
+            )
+        else:
+            # BUY/HOLD: 현재가 기준 (기존 로직)
+            targets = self._calculate_targets(signal, sr, chart_pattern, atr, fib)
+            stop_loss = self._calculate_stop_loss(signal, sr, atr)
+            rr_ratio = self._calculate_risk_reward(
+                self.current_price, targets["consensus"], stop_loss["final"]
+            )
 
         # 7. Enhanced confidence
         confidence = self._enhanced_confidence(

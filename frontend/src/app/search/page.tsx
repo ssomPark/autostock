@@ -259,7 +259,9 @@ function SearchPage() {
                   <span className="text-lg font-bold">{sc.confidence.final.toFixed(0)}%</span>
                 </div>
                 <div className="flex flex-col items-center gap-2 py-2">
-                  <span className="text-xs text-[var(--muted)]">매수 추천가</span>
+                  <span className="text-xs text-[var(--muted)]">
+                    {sc.signal === "SELL" ? "재매수 검토가" : "매수 추천가"}
+                  </span>
                   <span className="text-lg font-bold text-blue-400">{formatPrice(sc.entry_price?.consensus)}</span>
                   {sc.entry_price?.discount_pct > 0 && (
                     <span className="text-xs text-[var(--muted)]">-{sc.entry_price.discount_pct}%</span>
@@ -313,7 +315,9 @@ function SearchPage() {
               {/* Entry price methods */}
               {sc.entry_price?.methods?.length > 0 && (
                 <div className="mt-3 pt-3 border-t border-[var(--card-border)]">
-                  <p className="text-xs text-[var(--muted)] mb-2">매수 추천가 산출 근거</p>
+                  <p className="text-xs text-[var(--muted)] mb-2">
+                    {sc.signal === "SELL" ? "재매수 검토가 산출 근거" : "매수 추천가 산출 근거"}
+                  </p>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                     {sc.entry_price.methods.map((m: { method: string; price: number; rationale: string }, i: number) => (
                       <div key={i} className="text-xs px-3 py-2 rounded bg-[var(--background)]">

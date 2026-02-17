@@ -129,7 +129,9 @@ export function Watchlist() {
                   <p className="font-medium mt-0.5">{item.confidence.toFixed(0)}%</p>
                 </div>
                 <div>
-                  <span className="text-[var(--muted)]">매수 추천가</span>
+                  <span className="text-[var(--muted)]">
+                    {item.action === "SELL" ? "재매수 검토가" : "매수 추천가"}
+                  </span>
                   <p className="font-medium mt-0.5" style={{ color: "#60a5fa" }}>
                     {formatPrice(item.entry_price)}
                   </p>
