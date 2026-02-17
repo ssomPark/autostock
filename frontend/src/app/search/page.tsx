@@ -1,11 +1,12 @@
 "use client";
 
 import { useState, useEffect, Suspense } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
-import { fetchFinancials, fetchScore } from "@/lib/api";
+import { fetchFinancials, fetchScore, saveAnalysisAPI } from "@/lib/api";
 import { CandlestickChart } from "@/components/charts/candlestick-chart";
 import { addToWatchlist, isInWatchlist } from "@/lib/watchlist";
+import { useAuth } from "@/lib/auth-context";
 
 function detectMarket(ticker: string): string {
   return /^\d{6}$/.test(ticker.trim()) ? "KOSPI" : "NASDAQ";
@@ -85,6 +86,8 @@ export default function SearchPageWrapper() {
 
 function SearchPage() {
   const searchParams = useSearchParams();
+  const queryClient = useQueryClient();
+  const { isAuthenticated } = useAuth();
   const [input, setInput] = useState("");
   const [ticker, setTicker] = useState("");
   const [market, setMarket] = useState("NASDAQ");
@@ -97,7 +100,7 @@ function SearchPage() {
       setInput(t);
       setTicker(t);
       setMarket(detectMarket(t));
-      setSaved(isInWatchlist(t));
+      isInWatchlist(t).then(setSaved);
     }
   }, [searchParams]);
 
@@ -107,7 +110,7 @@ function SearchPage() {
     const m = detectMarket(t);
     setTicker(t);
     setMarket(m);
-    setSaved(isInWatchlist(t));
+    isInWatchlist(t).then(setSaved);
   };
 
   const financials = useQuery({
@@ -130,6 +133,27 @@ function SearchPage() {
   const details = sc?.details;
   const indicators = sc?.indicators;
 
+  // Auto-save analysis to DB when logged in and data is loaded
+  const [analysisSaved, setAnalysisSaved] = useState(false);
+  useEffect(() => {
+    if (!isAuthenticated || !sc || !ticker || isLoading) return;
+    setAnalysisSaved(false);
+    saveAnalysisAPI({
+      ticker,
+      name: fin?.name || ticker,
+      market,
+      signal: sc.signal,
+      grade: sc.grade,
+      confidence: sc.confidence?.final ?? 0,
+      current_price: sc.current_price ?? 0,
+      total_score: sc.total_score ?? 0,
+      score_data: sc,
+      financials_data: fin ?? {},
+    })
+      .then(() => setAnalysisSaved(true))
+      .catch(() => {});
+  }, [isAuthenticated, sc, ticker, market, isLoading]);
+
   return (
     <div className="space-y-6 max-w-6xl">
       <h1 className="text-2xl font-bold">종목 분석</h1>
@@ -150,6 +174,14 @@ function SearchPage() {
         >
           분석하기
         </button>
+        {isAuthenticated && analysisSaved && ticker && !isLoading && (
+          <span className="flex items-center text-xs text-green-400 whitespace-nowrap">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-1">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+            저장됨
+          </span>
+        )}
       </div>
 
       {!ticker && (
@@ -171,8 +203,8 @@ function SearchPage() {
               <div className="flex items-center justify-between mb-4">
                 <h2 className="text-lg font-semibold">종합 판정</h2>
                 <button
-                  onClick={() => {
-                    addToWatchlist({
+                  onClick={async () => {
+                    await addToWatchlist({
                       ticker,
                       name: fin?.name || ticker,
                       market,
@@ -188,6 +220,9 @@ function SearchPage() {
                       added_at: new Date().toISOString(),
                     });
                     setSaved(true);
+                    if (isAuthenticated) {
+                      queryClient.invalidateQueries({ queryKey: ["watchlist"] });
+                    }
                   }}
                   disabled={saved}
                   className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
@@ -200,7 +235,7 @@ function SearchPage() {
                 </button>
               </div>
 
-              <div className="grid grid-cols-3 md:grid-cols-7 gap-4">
+              <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-4">
                 {/* Signal + Grade */}
                 <div className="flex flex-col items-center gap-2 py-2">
                   <span className="text-xs text-[var(--muted)]">신호</span>
@@ -623,7 +658,7 @@ function SearchPage() {
           {indicators?.fibonacci?.levels && Object.keys(indicators.fibonacci.levels).length > 0 && (
             <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-5">
               <h2 className="text-lg font-semibold mb-3">피보나치 레벨</h2>
-              <div className="grid grid-cols-3 md:grid-cols-5 gap-2 text-sm">
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2 text-sm">
                 {Object.entries(indicators.fibonacci.levels).map(([level, price]: [string, any]) => {
                   const isExt = level.startsWith("ext_");
                   const displayLevel = isExt ? level.replace("ext_", "") : level;

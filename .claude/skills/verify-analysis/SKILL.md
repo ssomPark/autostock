@@ -17,6 +17,7 @@ description: Backend 분석 모듈의 핵심 규칙(신호 가중치, numpy 직�
 - `backend/src/analysis/signal_aggregator.py` 수정 후
 - `backend/src/analysis/support_resistance.py` 또는 `volume_analysis.py` 수정 후
 - `backend/src/api/routes/analysis.py`에서 분석 엔드포인트 추가/수정 후
+- `backend/src/api/routes/n8n.py`에서 aggregate 엔드포인트 또는 ScoringEngine 호출 수정 후
 - 신호 가중치나 등급 기준 변경 후
 
 ## Related Files
@@ -30,6 +31,7 @@ description: Backend 분석 모듈의 핵심 규칙(신호 가중치, numpy 직�
 | `backend/src/analysis/candlestick_patterns.py` | 캔들스틱 패턴 탐지 |
 | `backend/src/analysis/chart_patterns.py` | 차트 패턴 탐지 |
 | `backend/src/api/routes/analysis.py` | 분석 API 라우트 (_sanitize 사용, ScoringEngine 호출) |
+| `backend/src/api/routes/n8n.py` | N8N 파이프라인 연동 (aggregate 엔드포인트에서 ScoringEngine, SignalAggregator 사용) |
 
 ## Workflow
 
@@ -192,6 +194,37 @@ cd "I:\Project\AutoStock" && grep -A 15 "_assign_grade" backend/src/analysis/sco
 
 **위반:** 경계값이 순서대로가 아니거나 겹치면 등급 할당이 잘못됩니다.
 
+### Step 9: N8N aggregate 엔드포인트의 ScoringEngine 출력 키 검증
+
+**파일:** `backend/src/api/routes/n8n.py`
+
+**검사:** aggregate 엔드포인트에서 `ScoringEngine.compute()` 결과 접근 시, `compute()`가 실제로 반환하는 키만 사용해야 합니다. 현재 접근하는 키: `grade`, `confidence.final`, `risk_reward_ratio`.
+
+```bash
+cd "I:\Project\AutoStock" && python -c "
+import re, sys
+with open('backend/src/api/routes/n8n.py', encoding='utf-8') as f:
+    content = f.read()
+# Find score_result.get() calls
+gets = re.findall(r'score_result\.get\([\"\\'](\w+)[\"\\']', content)
+if not gets:
+    print('SKIP: ScoringEngine not used in n8n.py')
+    sys.exit(0)
+# Verify these keys exist in compute() output
+required_in_compute = ['grade', 'confidence', 'risk_reward_ratio']
+with open('backend/src/analysis/scoring_engine.py', encoding='utf-8') as f:
+    engine_content = f.read()
+compute_return = engine_content[engine_content.rfind('return {'):]
+missing = [k for k in gets if k not in compute_return]
+if missing:
+    print(f'FAIL: n8n.py accesses keys not in compute() return: {missing}')
+    sys.exit(1)
+print(f'PASS: All {len(gets)} accessed keys ({gets}) exist in compute() return')
+"
+```
+
+**위반:** `n8n.py`가 `compute()`에 없는 키를 `.get()`하면 항상 `None`을 반환하여 등급/신뢰도가 누락됩니다.
+
 ## Output Format
 
 ```markdown
@@ -205,6 +238,7 @@ cd "I:\Project\AutoStock" && grep -A 15 "_assign_grade" backend/src/analysis/sco
 | 6 | S/R strength 범위 | PASS/FAIL | cap = X.X |
 | 7 | volume divergence 부호 | PASS/FAIL | *= X.X |
 | 8 | 등급 기준 순서 | PASS/FAIL | 경계값 목록 |
+| 9 | N8N aggregate ScoringEngine 키 | PASS/FAIL/SKIP | 접근 키 목록 |
 ```
 
 ## Exceptions

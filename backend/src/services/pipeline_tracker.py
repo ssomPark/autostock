@@ -36,19 +36,29 @@ class PipelineTracker:
             "current_step": None,
             "started_at": None,
             "elapsed_seconds": 0,
-            "steps": [
-                {
-                    "id": s["id"],
-                    "name": s["name"],
-                    "icon": s["icon"],
-                    "status": "pending",
-                    "duration": None,
-                    "summary": None,
-                }
-                for s in PIPELINE_STEPS
-            ],
+            "steps": self._fresh_steps(),
             "logs": [],
+            "batch": {
+                "enabled": False,
+                "markets": [],
+                "current_index": 0,
+                "results": [],
+            },
         }
+
+    @staticmethod
+    def _fresh_steps() -> list[dict[str, Any]]:
+        return [
+            {
+                "id": s["id"],
+                "name": s["name"],
+                "icon": s["icon"],
+                "status": "pending",
+                "duration": None,
+                "summary": None,
+            }
+            for s in PIPELINE_STEPS
+        ]
 
     def _elapsed(self) -> float:
         if self._state["started_at"] is None:
@@ -75,7 +85,7 @@ class PipelineTracker:
 
     # --- Public API (called from pipeline flow) ---
 
-    async def start(self, market: str) -> str:
+    async def start(self, market: str, batch_markets: list[str] | None = None) -> str:
         async with self._lock:
             pid = str(uuid.uuid4())[:8]
             self._state = self._idle_state()
@@ -83,7 +93,21 @@ class PipelineTracker:
             self._state["market"] = market
             self._state["status"] = "running"
             self._state["started_at"] = time.time()
-            self._state["logs"] = [self._log_entry(f"파이프라인 시작 (시장: {market})")]
+
+            if batch_markets:
+                self._state["batch"] = {
+                    "enabled": True,
+                    "markets": batch_markets,
+                    "current_index": 0,
+                    "results": [],
+                }
+                self._state["logs"] = [
+                    self._log_entry(f"배치 파이프라인 시작 ({' → '.join(batch_markets)})"),
+                    self._log_entry(f"파이프라인 시작 (시장: {market})"),
+                ]
+            else:
+                self._state["logs"] = [self._log_entry(f"파이프라인 시작 (시장: {market})")]
+
             await self._broadcast()
             return pid
 
@@ -133,12 +157,69 @@ class PipelineTracker:
 
     async def complete(self, summary: str = "") -> None:
         async with self._lock:
-            self._state["status"] = "completed"
-            self._state["current_step"] = None
-            self._state["logs"].append(
-                self._log_entry(f"🎉 파이프라인 완료! {summary}")
-            )
-            await self._broadcast()
+            batch = self._state["batch"]
+            if batch["enabled"]:
+                # 배치 모드: 현재 마켓 완료만 기록 (최종 완료는 advance_batch에서 처리)
+                self._state["current_step"] = None
+                self._state["logs"].append(
+                    self._log_entry(f"✅ {self._state['market']} 시장 파이프라인 완료! {summary}")
+                )
+                await self._broadcast()
+            else:
+                self._state["status"] = "completed"
+                self._state["current_step"] = None
+                self._state["logs"].append(
+                    self._log_entry(f"🎉 파이프라인 완료! {summary}")
+                )
+                await self._broadcast()
+
+    async def advance_batch(self) -> str | None:
+        """배치 모드에서 다음 마켓으로 진행. 다음 마켓 문자열 반환, 없으면 None."""
+        async with self._lock:
+            batch = self._state["batch"]
+            if not batch["enabled"]:
+                return None
+
+            # 현재 마켓 결과 저장
+            current_market = batch["markets"][batch["current_index"]]
+            completed_steps = [s for s in self._state["steps"] if s.get("status") == "completed"]
+            duration = sum(s.get("duration", 0) or 0 for s in completed_steps)
+            batch["results"].append({
+                "market": current_market,
+                "status": "completed",
+                "duration": round(duration, 1),
+            })
+
+            next_index = batch["current_index"] + 1
+            if next_index < len(batch["markets"]):
+                # 다음 마켓으로 진행
+                next_market = batch["markets"][next_index]
+                batch["current_index"] = next_index
+                self._state["market"] = next_market
+                self._state["steps"] = self._fresh_steps()
+                self._state["current_step"] = None
+                self._state["logs"].append(
+                    self._log_entry(f"--- 다음 시장으로 전환: {next_market} ---")
+                )
+                self._state["logs"].append(
+                    self._log_entry(f"파이프라인 시작 (시장: {next_market})")
+                )
+                await self._broadcast()
+                return next_market
+            else:
+                # 모든 마켓 완료
+                total_duration = sum(r["duration"] for r in batch["results"])
+                market_summary = " + ".join(
+                    f"{r['market']} {r['duration']}s" for r in batch["results"]
+                )
+                self._state["status"] = "completed"
+                self._state["logs"].append(
+                    self._log_entry(
+                        f"🎉 전체 파이프라인 완료 — {market_summary} = 총 {round(total_duration, 1)}s"
+                    )
+                )
+                await self._broadcast()
+                return None
 
     def get_state(self) -> dict[str, Any]:
         state = {**self._state}
@@ -147,6 +228,7 @@ class PipelineTracker:
         for s in state["steps"]:
             steps.append({k: v for k, v in s.items() if not k.startswith("_")})
         state["steps"] = steps
+        state["batch"] = {**self._state["batch"]}
         return state
 
     async def subscribe(self) -> AsyncGenerator[dict, None]:

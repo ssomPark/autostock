@@ -32,6 +32,8 @@ export function CandlestickChart({ ticker, market, name }: CandlestickChartProps
       chartRef.current = null;
     }
 
+    const chartHeight = window.innerWidth < 768 ? 250 : 400;
+
     const chart = createChart(containerRef.current, {
       layout: {
         background: { color: "#141414" },
@@ -42,7 +44,7 @@ export function CandlestickChart({ ticker, market, name }: CandlestickChartProps
         horzLines: { color: "#1e1e1e" },
       },
       width: containerRef.current.clientWidth,
-      height: 400,
+      height: chartHeight,
       crosshair: {
         mode: 0,
       },
@@ -88,7 +90,11 @@ export function CandlestickChart({ ticker, market, name }: CandlestickChartProps
 
     const handleResize = () => {
       if (containerRef.current) {
-        chart.applyOptions({ width: containerRef.current.clientWidth });
+        const newHeight = window.innerWidth < 768 ? 250 : 400;
+        chart.applyOptions({
+          width: containerRef.current.clientWidth,
+          height: newHeight,
+        });
       }
     };
     window.addEventListener("resize", handleResize);
@@ -100,19 +106,21 @@ export function CandlestickChart({ ticker, market, name }: CandlestickChartProps
     };
   }, [data]);
 
+  const chartHeight = typeof window !== "undefined" && window.innerWidth < 768 ? 250 : 400;
+
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
-        <h2 className="text-lg font-semibold">{name || ticker} ({ticker}) 차트</h2>
-        <span className="text-sm text-[var(--muted)]">{market}</span>
+        <h2 className="text-base sm:text-lg font-semibold truncate">{name || ticker} ({ticker}) 차트</h2>
+        <span className="text-sm text-[var(--muted)] ml-2 shrink-0">{market}</span>
       </div>
       {isLoading && (
-        <div className="h-[400px] flex items-center justify-center text-[var(--muted)]">
+        <div className="flex items-center justify-center text-[var(--muted)]" style={{ height: chartHeight }}>
           차트 로딩 중...
         </div>
       )}
       {!isLoading && (!data?.data || data.data.length === 0) && (
-        <div className="h-[400px] flex items-center justify-center text-[var(--muted)]">
+        <div className="flex items-center justify-center text-[var(--muted)]" style={{ height: chartHeight }}>
           차트 데이터를 가져올 수 없습니다
         </div>
       )}

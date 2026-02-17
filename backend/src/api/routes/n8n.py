@@ -20,13 +20,60 @@ from src.models.db_models import PipelineRunModel, RecommendationModel
 from src.services.market_screener import MarketScreener
 from src.services.pipeline_tracker import tracker
 from src.tools.stock_mapper import KEYWORD_TICKER_MAP
+from src.utils.stock_name_resolver import resolve_kr_name
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
+def _get_ohlcv_with_fallback(ticker: str, market: str):
+    """Get OHLCV data with yfinance fallback when primary source fails."""
+    import pandas as pd
+    from src.services.market_data_service import MarketDataService
+    service = MarketDataService()
+    df = service.get_ohlcv(ticker, market)
+    if df is None or (hasattr(df, 'empty') and df.empty):
+        try:
+            yf_ticker = ticker
+            if ticker.isdigit():
+                suffix = ".KQ" if market.upper() == "KOSDAQ" else ".KS"
+                yf_ticker = f"{ticker}{suffix}"
+            yf_df = yf.Ticker(yf_ticker).history(period="3mo")
+            if not yf_df.empty:
+                yf_df.columns = [c.lower() for c in yf_df.columns]
+                if "stock splits" in yf_df.columns:
+                    yf_df.drop(columns=["stock splits", "dividends"], errors="ignore", inplace=True)
+                yf_df.index = pd.to_datetime(yf_df.index).tz_localize(None)
+                return yf_df
+        except Exception as e:
+            logger.warning(f"yfinance fallback failed for {ticker}: {e}")
+    return df
+
+
+def _get_fundamentals(ticker: str, market: str) -> dict:
+    """Extract fundamental data from yfinance for ScoringEngine confidence adjustment."""
+    try:
+        yf_ticker = ticker
+        if ticker.isdigit():
+            suffix = ".KQ" if market.upper() == "KOSDAQ" else ".KS"
+            yf_ticker = f"{ticker}{suffix}"
+        info = yf.Ticker(yf_ticker).info or {}
+        return {
+            "targetMeanPrice": info.get("targetMeanPrice"),
+            "recommendationKey": info.get("recommendationKey"),
+            "shortPercentOfFloat": info.get("shortPercentOfFloat"),
+            "earningsGrowth": info.get("earningsGrowth"),
+            "shortName": info.get("shortName") or info.get("longName"),
+            "sector": info.get("sector"),
+            "market": market,
+        }
+    except Exception as e:
+        logger.warning(f"Failed to fetch fundamentals for {ticker}: {e}")
+        return {}
+
+
 def _resolve_stock_name(ticker: str, market: str = "KOSPI") -> str:
-    """Resolve stock name from ticker via stock_mapper or yfinance."""
+    """Resolve stock name from ticker via stock_mapper, Naver, or yfinance."""
     # 1. Check stock_mapper for known tickers
     for _key, val in KEYWORD_TICKER_MAP.items():
         entries = val if isinstance(val, list) else [val]
@@ -34,7 +81,13 @@ def _resolve_stock_name(ticker: str, market: str = "KOSPI") -> str:
             if entry["ticker"] == ticker:
                 return entry["name"]
 
-    # 2. Fallback to yfinance
+    # 2. Korean stocks: resolve from Naver Finance (returns Korean name)
+    if ticker.isdigit() and len(ticker) == 6:
+        name = resolve_kr_name(ticker)
+        if name and name != ticker:
+            return name
+
+    # 3. Fallback to yfinance (US stocks)
     try:
         yf_ticker = ticker
         if ticker.isdigit():
@@ -146,8 +199,20 @@ async def update_progress(req: ProgressRequest):
 @router.post("/complete")
 async def complete_pipeline(req: CompleteRequest):
     """Mark pipeline as complete. Called at the end of N8N workflow."""
+    import asyncio
+
     await tracker.complete(req.summary)
     logger.info(f"N8N pipeline completed: {req.summary}")
+
+    # 배치 모드: 다음 마켓 자동 실행
+    next_market = await tracker.advance_batch()
+    if next_market:
+        from src.api.routes.pipeline import _trigger_n8n_webhook
+
+        pid = tracker.get_state()["pipeline_id"]
+        asyncio.create_task(_trigger_n8n_webhook(pid, next_market))
+        return {"success": True, "status": "batch_continuing", "next_market": next_market}
+
     return {"success": True, "status": "completed"}
 
 
@@ -234,11 +299,10 @@ async def aggregate_signals(req: AggregateRequest):
 
     # ScoringEngine 등급 산출 (OHLCV 데이터 필요)
     try:
-        from src.services.market_data_service import MarketDataService
-        service = MarketDataService()
-        df = service.get_ohlcv(req.ticker, market=req.market)
+        df = _get_ohlcv_with_fallback(req.ticker, req.market)
         if df is not None and len(df) >= 20:
-            engine = ScoringEngine(df)
+            fundamentals = _get_fundamentals(req.ticker, req.market)
+            engine = ScoringEngine(df, fundamentals=fundamentals)
             score_result = engine.compute()
             result["grade"] = score_result.get("grade")
             result["scoring_confidence"] = score_result.get("confidence", {}).get("final")
@@ -274,6 +338,20 @@ async def save_recommendations(
             if not name or name == rec.ticker:
                 name = _resolve_stock_name(rec.ticker, rec.market)
 
+            # ScoringEngine 신뢰도 계산 (통일된 confidence 사용)
+            confidence = rec.confidence
+            try:
+                df = _get_ohlcv_with_fallback(rec.ticker, rec.market)
+                if df is not None and len(df) >= 20:
+                    fundamentals = _get_fundamentals(rec.ticker, rec.market)
+                    engine = ScoringEngine(df, fundamentals=fundamentals)
+                    score_result = engine.compute()
+                    scoring_conf = score_result.get("confidence", {}).get("final")
+                    if scoring_conf is not None:
+                        confidence = scoring_conf / 100.0  # 5~95% → 0.05~0.95
+            except Exception as e:
+                logger.warning(f"ScoringEngine confidence failed for {rec.ticker}: {e}")
+
             recommendation = RecommendationModel(
                 pipeline_run_id=pipeline_run.id,
                 ticker=rec.ticker,
@@ -281,7 +359,7 @@ async def save_recommendations(
                 market=rec.market,
                 current_price=rec.current_price,
                 action=rec.action,
-                confidence=rec.confidence,
+                confidence=confidence,
                 composite_score=rec.composite_score,
                 target_price=rec.target_price,
                 stop_loss=rec.stop_loss,

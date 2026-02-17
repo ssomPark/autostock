@@ -18,6 +18,9 @@ node_modules/
 .DS_Store
 Thumbs.db
 
+# Playwright MCP
+.playwright-mcp/
+
 # Data
 *.db
 *.sqlite3

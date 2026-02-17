@@ -158,6 +158,157 @@ class RecommendationModel(Base):
     )
 
 
+class UserModel(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    email = Column(String(255), unique=True, nullable=False)
+    name = Column(String(200), nullable=False)
+    avatar_url = Column(String(1000), nullable=True)
+    provider = Column(String(20), nullable=False)  # "google" / "github"
+    provider_id = Column(String(200), nullable=False)
+    created_at = Column(DateTime, default=datetime.now)
+    last_login_at = Column(DateTime, default=datetime.now)
+
+    watchlist_items = relationship("WatchlistItemModel", back_populates="user", cascade="all, delete-orphan")
+    saved_analyses = relationship("SavedAnalysisModel", back_populates="user", cascade="all, delete-orphan")
+    paper_accounts = relationship("PaperAccountModel", back_populates="user", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("ix_users_provider_provider_id", "provider", "provider_id", unique=True),
+    )
+
+
+class WatchlistItemModel(Base):
+    __tablename__ = "watchlist_items"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    ticker = Column(String(20), nullable=False)
+    name = Column(String(200), nullable=False)
+    market = Column(String(10), nullable=False)
+    action = Column(String(10), default="HOLD")
+    grade = Column(String(5), default="")
+    confidence = Column(Float, default=0.0)
+    current_price = Column(Float, default=0.0)
+    change_pct = Column(Float, nullable=True)
+    entry_price = Column(Float, nullable=True)
+    target_price = Column(Float, nullable=True)
+    stop_loss = Column(Float, nullable=True)
+    risk_reward = Column(Float, nullable=True)
+    added_at = Column(DateTime, default=datetime.now)
+
+    user = relationship("UserModel", back_populates="watchlist_items")
+
+    __table_args__ = (
+        Index("ix_watchlist_items_user_ticker", "user_id", "ticker", unique=True),
+    )
+
+
+class SavedAnalysisModel(Base):
+    __tablename__ = "saved_analyses"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    ticker = Column(String(20), nullable=False)
+    name = Column(String(200), nullable=False)
+    market = Column(String(10), nullable=False)
+    signal = Column(String(10), default="HOLD")
+    grade = Column(String(5), default="")
+    confidence = Column(Float, default=0.0)
+    current_price = Column(Float, default=0.0)
+    total_score = Column(Float, default=0.0)
+    score_data = Column(JSONB, default=dict)       # 전체 score API 응답
+    financials_data = Column(JSONB, default=dict)   # 전체 financials API 응답
+    analyzed_at = Column(DateTime, default=datetime.now)
+
+    user = relationship("UserModel", back_populates="saved_analyses")
+
+    __table_args__ = (
+        Index("ix_saved_analyses_user_id", "user_id"),
+        Index("ix_saved_analyses_user_ticker", "user_id", "ticker"),
+    )
+
+
+class PaperAccountModel(Base):
+    __tablename__ = "paper_accounts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(100), nullable=False, default="기본 계좌")
+    initial_balance = Column(Float, nullable=False, default=100_000_000)
+    cash_balance = Column(Float, nullable=False, default=100_000_000)
+    currency = Column(String(10), nullable=False, default="KRW")
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    user = relationship("UserModel", back_populates="paper_accounts")
+    positions = relationship("PaperPositionModel", back_populates="account", cascade="all, delete-orphan")
+    trades = relationship("PaperTradeModel", back_populates="account", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("ix_paper_accounts_user_id", "user_id"),
+    )
+
+
+class PaperPositionModel(Base):
+    __tablename__ = "paper_positions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_id = Column(Integer, ForeignKey("paper_accounts.id", ondelete="CASCADE"), nullable=False)
+    ticker = Column(String(20), nullable=False)
+    name = Column(String(200), nullable=False)
+    market = Column(String(10), nullable=False)
+    quantity = Column(Integer, nullable=False, default=0)
+    avg_buy_price = Column(Float, nullable=False, default=0.0)
+    total_invested = Column(Float, nullable=False, default=0.0)
+    recommendation_id = Column(Integer, nullable=True)
+    recommendation_action = Column(String(10), nullable=True)
+    recommendation_confidence = Column(Float, nullable=True)
+    recommendation_grade = Column(String(5), nullable=True)
+    opened_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    account = relationship("PaperAccountModel", back_populates="positions")
+
+    __table_args__ = (
+        Index("ix_paper_positions_account_ticker", "account_id", "ticker", unique=True),
+    )
+
+
+class PaperTradeModel(Base):
+    __tablename__ = "paper_trades"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_id = Column(Integer, ForeignKey("paper_accounts.id", ondelete="CASCADE"), nullable=False)
+    ticker = Column(String(20), nullable=False)
+    name = Column(String(200), nullable=False)
+    market = Column(String(10), nullable=False)
+    side = Column(String(4), nullable=False)  # "BUY" / "SELL"
+    quantity = Column(Integer, nullable=False)
+    price = Column(Float, nullable=False)
+    total_amount = Column(Float, nullable=False)
+    realized_pnl = Column(Float, nullable=True)
+    realized_pnl_pct = Column(Float, nullable=True)
+    source = Column(String(20), nullable=False, default="manual")  # "manual" / "recommendation"
+    recommendation_id = Column(Integer, nullable=True)
+    recommendation_action = Column(String(10), nullable=True)
+    recommendation_confidence = Column(Float, nullable=True)
+    recommendation_grade = Column(String(5), nullable=True)
+    signal_weights_snapshot = Column(JSONB, nullable=True)
+    executed_at = Column(DateTime, default=datetime.now)
+
+    account = relationship("PaperAccountModel", back_populates="trades")
+
+    __table_args__ = (
+        Index("ix_paper_trades_account_id", "account_id"),
+        Index("ix_paper_trades_ticker", "ticker"),
+        Index("ix_paper_trades_executed_at", "executed_at"),
+        Index("ix_paper_trades_source", "source"),
+    )
+
+
 class OHLCVCacheModel(Base):
     __tablename__ = "ohlcv_cache"
 

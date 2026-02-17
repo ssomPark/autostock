@@ -2,7 +2,9 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { getWatchlist, removeFromWatchlist, type WatchlistItem } from "@/lib/watchlist";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { getWatchlist, getWatchlistSync, removeFromWatchlist, type WatchlistItem } from "@/lib/watchlist";
+import { useAuth } from "@/lib/auth-context";
 
 function formatPrice(price: number | null | undefined): string {
   if (price == null || price === 0) return "-";
@@ -21,14 +23,37 @@ const gradeColor: Record<string, string> = {
 };
 
 export function Watchlist() {
-  const [items, setItems] = useState<WatchlistItem[]>([]);
+  const { isAuthenticated } = useAuth();
+  const queryClient = useQueryClient();
 
+  // Server-backed watchlist when logged in
+  const { data: serverItems } = useQuery({
+    queryKey: ["watchlist"],
+    queryFn: () => getWatchlist(),
+    enabled: isAuthenticated,
+  });
+
+  // localStorage fallback when not logged in
+  const [localItems, setLocalItems] = useState<WatchlistItem[]>([]);
   useEffect(() => {
-    setItems(getWatchlist());
-    const handler = () => setItems(getWatchlist());
-    window.addEventListener("watchlist-updated", handler);
-    return () => window.removeEventListener("watchlist-updated", handler);
-  }, []);
+    if (!isAuthenticated) {
+      setLocalItems(getWatchlistSync());
+      const handler = () => setLocalItems(getWatchlistSync());
+      window.addEventListener("watchlist-updated", handler);
+      return () => window.removeEventListener("watchlist-updated", handler);
+    }
+  }, [isAuthenticated]);
+
+  const items = isAuthenticated ? (serverItems ?? []) : localItems;
+
+  const handleRemove = async (ticker: string) => {
+    await removeFromWatchlist(ticker);
+    if (isAuthenticated) {
+      queryClient.invalidateQueries({ queryKey: ["watchlist"] });
+    } else {
+      setLocalItems(getWatchlistSync());
+    }
+  };
 
   if (items.length === 0) return null;
 
@@ -86,10 +111,7 @@ export function Watchlist() {
                     {actionLabel}
                   </span>
                   <button
-                    onClick={() => {
-                      removeFromWatchlist(item.ticker);
-                      setItems(getWatchlist());
-                    }}
+                    onClick={() => handleRemove(item.ticker)}
                     className="text-[var(--muted)] hover:text-red-400 text-xs transition-colors ml-1"
                     title="삭제"
                   >
@@ -97,7 +119,7 @@ export function Watchlist() {
                   </button>
                 </div>
               </div>
-              <div className="grid grid-cols-7 gap-2 text-xs">
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2 text-xs">
                 <div>
                   <span className="text-[var(--muted)]">현재가</span>
                   <p className="font-medium mt-0.5">{formatPrice(item.current_price)}</p>

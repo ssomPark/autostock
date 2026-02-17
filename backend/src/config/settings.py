@@ -31,6 +31,16 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
 
+    # OAuth
+    google_client_id: str = ""
+    google_client_secret: str = ""
+
+    # JWT
+    jwt_secret_key: str = "change-me-in-production"
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_expire_minutes: int = 15
+    jwt_refresh_token_expire_days: int = 7
+
     # Server
     api_host: str = "0.0.0.0"
     api_port: int = 8000
