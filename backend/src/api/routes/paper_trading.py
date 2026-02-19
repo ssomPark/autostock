@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from src.auth.dependencies import get_current_user
+from src.auth.dependencies import get_current_user, get_current_user_optional
 from src.db.database import get_async_session
 from src.models.db_models import (
     UserModel,
@@ -19,7 +21,7 @@ from src.models.db_models import (
     PaperPositionModel,
     PaperTradeModel,
 )
-from src.services.market_data_service import MarketDataService
+from src.services.market_data_service import MarketDataService, get_usd_krw_rate
 from src.utils.stock_name_resolver import resolve_kr_name
 
 logger = logging.getLogger(__name__)
@@ -92,6 +94,7 @@ def _serialize_trade(trade: PaperTradeModel) -> dict:
         "realized_pnl": trade.realized_pnl,
         "realized_pnl_pct": trade.realized_pnl_pct,
         "source": trade.source,
+        "exchange_rate": trade.exchange_rate,
         "recommendation_id": trade.recommendation_id,
         "recommendation_action": trade.recommendation_action,
         "recommendation_confidence": trade.recommendation_confidence,
@@ -258,15 +261,23 @@ async def execute_buy(
         if resolved and resolved != body.ticker:
             stock_name = resolved
 
-    total_cost = body.quantity * price
-    if account.cash_balance < total_cost:
+    # US 종목 환율 조회
+    is_us = body.market in ("NYSE", "NASDAQ")
+    exchange_rate = None
+    if is_us:
+        exchange_rate = await asyncio.to_thread(get_usd_krw_rate)
+
+    # 금액 계산: US면 환율 적용 (price는 USD, total_cost_krw는 KRW)
+    total_cost_krw = body.quantity * price * (exchange_rate or 1)
+
+    if account.cash_balance < total_cost_krw:
         raise HTTPException(
             status_code=400,
-            detail=f"잔고 부족: 필요 {total_cost:,.0f}, 보유 {account.cash_balance:,.0f}",
+            detail=f"잔고 부족: 필요 {total_cost_krw:,.0f}원, 보유 {account.cash_balance:,.0f}원",
         )
 
-    # Deduct cash
-    account.cash_balance -= total_cost
+    # Deduct cash (KRW)
+    account.cash_balance -= total_cost_krw
     account.updated_at = datetime.now()
 
     # Upsert position
@@ -279,6 +290,7 @@ async def execute_buy(
     position = result.scalar_one_or_none()
 
     if position is None:
+        # avg_buy_price: 원래 통화(USD/KRW), total_invested: 항상 KRW
         position = PaperPositionModel(
             account_id=body.account_id,
             ticker=body.ticker,
@@ -286,7 +298,7 @@ async def execute_buy(
             market=body.market,
             quantity=body.quantity,
             avg_buy_price=price,
-            total_invested=total_cost,
+            total_invested=total_cost_krw,
             recommendation_id=body.recommendation_id,
             recommendation_action=body.recommendation_action,
             recommendation_confidence=body.recommendation_confidence,
@@ -294,15 +306,16 @@ async def execute_buy(
         )
         session.add(position)
     else:
+        # 추가 매수: avg_buy_price는 원래 통화로 평균, total_invested는 KRW 누적
         old_total = position.avg_buy_price * position.quantity
         new_quantity = position.quantity + body.quantity
-        position.avg_buy_price = (old_total + total_cost) / new_quantity
+        position.avg_buy_price = (old_total + body.quantity * price) / new_quantity
         position.quantity = new_quantity
-        position.total_invested += total_cost
-        position.name = stock_name  # 한글 이름 갱신
+        position.total_invested += total_cost_krw
+        position.name = stock_name
         position.updated_at = datetime.now()
 
-    # Record trade
+    # Record trade (price: 원래 통화, total_amount: KRW)
     trade = PaperTradeModel(
         account_id=body.account_id,
         ticker=body.ticker,
@@ -311,7 +324,8 @@ async def execute_buy(
         side="BUY",
         quantity=body.quantity,
         price=price,
-        total_amount=total_cost,
+        total_amount=total_cost_krw,
+        exchange_rate=exchange_rate,
         source=body.source,
         recommendation_id=body.recommendation_id,
         recommendation_action=body.recommendation_action,
@@ -327,7 +341,8 @@ async def execute_buy(
         "ticker": body.ticker,
         "quantity": body.quantity,
         "price": price,
-        "total_cost": total_cost,
+        "total_cost": total_cost_krw,
+        "exchange_rate": exchange_rate,
         "cash_balance": account.cash_balance,
     }
 
@@ -356,24 +371,35 @@ async def execute_sell(
             detail=f"보유 수량 부족: 보유 {position.quantity}주, 매도 요청 {body.quantity}주",
         )
 
-    total_revenue = body.quantity * body.price
-    cost_basis = position.avg_buy_price * body.quantity
-    realized_pnl = total_revenue - cost_basis
-    realized_pnl_pct = (realized_pnl / cost_basis * 100) if cost_basis > 0 else 0.0
+    # US 종목 환율 조회
+    is_us = position.market in ("NYSE", "NASDAQ")
+    exchange_rate = None
+    if is_us:
+        exchange_rate = await asyncio.to_thread(get_usd_krw_rate)
 
-    # Update cash
-    account.cash_balance += total_revenue
+    # 매도 금액: US면 환율 적용 (body.price는 USD, total_revenue_krw는 KRW)
+    total_revenue_krw = body.quantity * body.price * (exchange_rate or 1)
+
+    # 원가: total_invested 기반 (항상 KRW)
+    cost_per_share_krw = position.total_invested / position.quantity
+    cost_basis_krw = cost_per_share_krw * body.quantity
+
+    realized_pnl = total_revenue_krw - cost_basis_krw
+    realized_pnl_pct = (realized_pnl / cost_basis_krw * 100) if cost_basis_krw > 0 else 0.0
+
+    # Update cash (KRW)
+    account.cash_balance += total_revenue_krw
     account.updated_at = datetime.now()
 
-    # Update position
+    # Update position (total_invested는 KRW 기준 차감)
     position.quantity -= body.quantity
-    position.total_invested -= cost_basis
+    position.total_invested -= cost_basis_krw
     if position.quantity <= 0:
         await session.delete(position)
     else:
         position.updated_at = datetime.now()
 
-    # Record trade
+    # Record trade (price: 원래 통화, total_amount: KRW)
     trade = PaperTradeModel(
         account_id=body.account_id,
         ticker=body.ticker,
@@ -382,7 +408,8 @@ async def execute_sell(
         side="SELL",
         quantity=body.quantity,
         price=body.price,
-        total_amount=total_revenue,
+        total_amount=total_revenue_krw,
+        exchange_rate=exchange_rate,
         realized_pnl=realized_pnl,
         realized_pnl_pct=realized_pnl_pct,
         source="manual",
@@ -396,7 +423,8 @@ async def execute_sell(
         "ticker": body.ticker,
         "quantity": body.quantity,
         "price": body.price,
-        "total_revenue": total_revenue,
+        "total_revenue": total_revenue_krw,
+        "exchange_rate": exchange_rate,
         "realized_pnl": round(realized_pnl, 2),
         "realized_pnl_pct": round(realized_pnl_pct, 2),
         "cash_balance": account.cash_balance,
@@ -439,15 +467,30 @@ async def get_positions(
         if not current_price or current_price <= 0:
             current_price = pos.avg_buy_price
 
-        eval_amount = current_price * pos.quantity
+        # US 종목 환율 적용: eval_amount는 항상 KRW
+        is_us = pos.market in ("NYSE", "NASDAQ")
+        rate = None
+        if is_us:
+            rate = await asyncio.to_thread(get_usd_krw_rate)
+            eval_amount = current_price * pos.quantity * rate
+        else:
+            eval_amount = current_price * pos.quantity
+
         data["current_price"] = current_price
         data["eval_amount"] = eval_amount
+        data["exchange_rate"] = rate
         data["unrealized_pnl"] = eval_amount - pos.total_invested
         data["unrealized_pnl_pct"] = (
             ((eval_amount - pos.total_invested) / pos.total_invested * 100)
             if pos.total_invested > 0
             else 0.0
         )
+        # US 종목: 주가 손익 vs 환율 손익 분리
+        if is_us and rate and pos.total_invested > 0 and pos.quantity > 0:
+            buy_rate = pos.total_invested / (pos.avg_buy_price * pos.quantity)
+            data["stock_pnl"] = (current_price - pos.avg_buy_price) * pos.quantity * rate
+            data["fx_pnl"] = pos.avg_buy_price * pos.quantity * (rate - buy_rate)
+            data["buy_exchange_rate"] = round(buy_rate, 2)
         data["price_fallback"] = current_price == pos.avg_buy_price
         return data
 
@@ -510,11 +553,15 @@ async def get_summary(
                 )
                 price = price_data.get("current_price", 0)
                 if price and price > 0:
+                    # US 종목 환율 적용
+                    if pos.market in ("NYSE", "NASDAQ"):
+                        rate = await asyncio.to_thread(get_usd_krw_rate)
+                        return price * pos.quantity * rate
                     return price * pos.quantity
             except Exception:
                 pass
-            # Fallback: 가격 조회 실패 시 평균매수가 사용
-            return pos.avg_buy_price * pos.quantity
+            # Fallback: total_invested (항상 KRW)
+            return pos.total_invested
 
         tasks = [_fetch_eval(pos) for pos in positions]
         evals = await asyncio.gather(*tasks)
@@ -552,3 +599,96 @@ async def get_summary(
         "position_count": len(positions),
         "currency": account.currency,
     }
+
+
+@router.get("/exchange-rate")
+async def get_exchange_rate():
+    """프론트엔드에서 주문 전 환율 표시용."""
+    rate = await asyncio.to_thread(get_usd_krw_rate)
+    return {"rate": round(rate, 2), "pair": "USDKRW"}
+
+
+# --- Leaderboard ---
+
+_leaderboard_cache: dict | None = None
+_leaderboard_cache_time: float = 0
+
+
+@router.get("/leaderboard")
+async def get_leaderboard(
+    user: UserModel | None = Depends(get_current_user_optional),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """수익률 랭킹 리더보드. 비로그인도 조회 가능."""
+    global _leaderboard_cache, _leaderboard_cache_time
+    now = time.time()
+
+    if _leaderboard_cache and now - _leaderboard_cache_time < 300:
+        return {**_leaderboard_cache, "current_user_id": user.id if user else None}
+
+    result = await session.execute(
+        select(PaperAccountModel)
+        .options(selectinload(PaperAccountModel.positions))
+        .where(PaperAccountModel.is_active == True)  # noqa: E712
+    )
+    accounts = result.scalars().all()
+
+    entries = []
+    for account in accounts:
+        # 포지션 평가금액 계산
+        total_eval = account.cash_balance
+        for pos in account.positions:
+            try:
+                price_data = await asyncio.to_thread(
+                    _market_data_svc.get_current_price, pos.ticker, pos.market
+                )
+                current_price = price_data.get("current_price", 0)
+                if not current_price or current_price <= 0:
+                    current_price = pos.avg_buy_price
+            except Exception:
+                current_price = pos.avg_buy_price
+
+            if pos.market in ("NYSE", "NASDAQ"):
+                rate = await asyncio.to_thread(get_usd_krw_rate)
+                total_eval += current_price * pos.quantity * rate
+            else:
+                total_eval += current_price * pos.quantity
+
+        total_pnl = total_eval - account.initial_balance
+        return_pct = (
+            (total_pnl / account.initial_balance * 100)
+            if account.initial_balance > 0
+            else 0
+        )
+
+        trade_count = await session.scalar(
+            select(func.count(PaperTradeModel.id)).where(
+                PaperTradeModel.account_id == account.id
+            )
+        )
+
+        user_obj = await session.get(UserModel, account.user_id)
+        entries.append(
+            {
+                "user_id": account.user_id,
+                "user_name": user_obj.name if user_obj and user_obj.name else "익명",
+                "user_avatar": user_obj.avatar_url if user_obj else None,
+                "account_name": account.name,
+                "initial_balance": account.initial_balance,
+                "total_value": round(total_eval, 0),
+                "total_pnl": round(total_pnl, 0),
+                "return_pct": round(return_pct, 2),
+                "trade_count": trade_count or 0,
+                "position_count": len(account.positions),
+            }
+        )
+
+    entries.sort(key=lambda x: x["return_pct"], reverse=True)
+    for i, e in enumerate(entries):
+        e["rank"] = i + 1
+
+    cached = {"entries": entries, "updated_at": datetime.utcnow().isoformat()}
+    _leaderboard_cache = cached
+    _leaderboard_cache_time = now
+
+    return {**cached, "current_user_id": user.id if user else None}

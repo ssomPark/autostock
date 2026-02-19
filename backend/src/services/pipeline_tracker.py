@@ -238,7 +238,7 @@ class PipelineTracker:
             yield self.get_state()
             while True:
                 try:
-                    event = await asyncio.wait_for(q.get(), timeout=30)
+                    event = await asyncio.wait_for(q.get(), timeout=15)
                     yield event
                 except asyncio.TimeoutError:
                     yield {"keepalive": True}

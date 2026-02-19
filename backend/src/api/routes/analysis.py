@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import urllib.parse
 
+import httpx
 import numpy as np
 import pandas as pd
 import yfinance as yf
@@ -22,6 +24,39 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 market_service = MarketDataService()
+
+
+@router.get("/search")
+async def search_stocks(q: str = Query(..., min_length=1)):
+    """종목명/코드 자동완성 검색. 네이버 주식 API 사용."""
+    url = f"https://ac.stock.naver.com/ac?q={urllib.parse.quote(q)}&target=stock"
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                url,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+                timeout=5,
+            )
+        data = resp.json()
+    except Exception as e:
+        logger.error(f"Stock search failed for '{q}': {e}")
+        return {"results": []}
+
+    results = []
+    for item in data.get("items", []):
+        if item.get("nationCode") not in ("KOR", "USA"):
+            continue
+        name = item.get("name", "")
+        if "스팩" in name or "SPAC" in name:
+            continue
+        results.append({
+            "ticker": item["code"],
+            "name": name,
+            "market": item.get("typeCode", ""),
+        })
+        if len(results) >= 10:
+            break
+    return {"results": results}
 
 
 def _sanitize(obj):

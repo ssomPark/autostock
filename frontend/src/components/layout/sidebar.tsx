@@ -83,7 +83,7 @@ export function Sidebar() {
       {/* Mobile header bar */}
       <div className="lg:hidden flex items-center justify-between px-4 py-3 bg-[var(--card)] border-b border-[var(--card-border)]">
         <div>
-          <h1 className="text-lg font-bold">AutoStock</h1>
+          <h1 className="text-lg font-bold">TradeRadar</h1>
           <p className="text-xs text-[var(--muted)]">AI Stock Analysis</p>
         </div>
         <button
@@ -109,7 +109,7 @@ export function Sidebar() {
           <aside className="relative w-64 bg-[var(--card)] border-r border-[var(--card-border)] flex flex-col animate-in slide-in-from-left duration-200">
             <div className="p-4 border-b border-[var(--card-border)] flex items-center justify-between">
               <div>
-                <h1 className="text-lg font-bold">AutoStock</h1>
+                <h1 className="text-lg font-bold">TradeRadar</h1>
                 <p className="text-xs text-[var(--muted)]">AI Stock Analysis</p>
               </div>
               <button
@@ -151,7 +151,7 @@ export function Sidebar() {
       {/* Desktop sidebar */}
       <aside className="hidden lg:flex w-56 bg-[var(--card)] border-r border-[var(--card-border)] flex-col">
         <div className="p-4 border-b border-[var(--card-border)]">
-          <h1 className="text-lg font-bold">AutoStock</h1>
+          <h1 className="text-lg font-bold">TradeRadar</h1>
           <p className="text-xs text-[var(--muted)]">AI Stock Analysis</p>
         </div>
         <nav className="flex-1 p-2">

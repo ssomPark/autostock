@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect, Suspense } from "react";
+import { useState, useEffect, useRef, useCallback, Suspense } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
-import { fetchFinancials, fetchScore, saveAnalysisAPI } from "@/lib/api";
+import { fetchFinancials, fetchScore, saveAnalysisAPI, searchStocks, type StockSearchResult } from "@/lib/api";
 import { CandlestickChart } from "@/components/charts/candlestick-chart";
 import { addToWatchlist, isInWatchlist } from "@/lib/watchlist";
 import { useAuth } from "@/lib/auth-context";
+import { formatPrice } from "@/lib/format";
 
 function detectMarket(ticker: string): string {
   return /^\d{6}$/.test(ticker.trim()) ? "KOSPI" : "NASDAQ";
@@ -23,12 +24,6 @@ function formatNumber(n: number | null | undefined): string {
 function formatPercent(n: number | null | undefined): string {
   if (n == null) return "-";
   return `${(n * 100).toFixed(1)}%`;
-}
-
-function formatPrice(price: number | null | undefined): string {
-  if (price == null || price === 0) return "-";
-  if (price >= 1000) return price.toLocaleString(undefined, { maximumFractionDigits: 0 });
-  return price.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
 // --- Grade badge ---
@@ -93,6 +88,13 @@ function SearchPage() {
   const [market, setMarket] = useState("NASDAQ");
   const [saved, setSaved] = useState(false);
 
+  // Autocomplete state
+  const [suggestions, setSuggestions] = useState<StockSearchResult[]>([]);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [highlightIdx, setHighlightIdx] = useState(-1);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   useEffect(() => {
     const q = searchParams.get("q");
     if (q) {
@@ -104,13 +106,83 @@ function SearchPage() {
     }
   }, [searchParams]);
 
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  // Debounced search
+  const handleInputChange = useCallback((value: string) => {
+    setInput(value);
+    setHighlightIdx(-1);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (value.trim().length < 2) {
+      setSuggestions([]);
+      setShowDropdown(false);
+      return;
+    }
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const data = await searchStocks(value.trim());
+        setSuggestions(data.results || []);
+        setShowDropdown((data.results || []).length > 0);
+      } catch {
+        setSuggestions([]);
+        setShowDropdown(false);
+      }
+    }, 300);
+  }, []);
+
+  const selectSuggestion = useCallback((item: StockSearchResult) => {
+    setInput(`${item.name} (${item.ticker})`);
+    setShowDropdown(false);
+    setSuggestions([]);
+    setTicker(item.ticker);
+    setMarket(item.market);
+    setSaved(false);
+    isInWatchlist(item.ticker).then(setSaved);
+  }, []);
+
   const handleSearch = () => {
+    setShowDropdown(false);
     const t = input.trim().toUpperCase();
     if (!t) return;
-    const m = detectMarket(t);
-    setTicker(t);
+    // If input contains parentheses like "한화 (000880)", extract the ticker
+    const parenMatch = input.match(/\(([^)]+)\)/);
+    const searchTicker = parenMatch ? parenMatch[1].trim().toUpperCase() : t;
+    const m = detectMarket(searchTicker);
+    setTicker(searchTicker);
     setMarket(m);
-    isInWatchlist(t).then(setSaved);
+    isInWatchlist(searchTicker).then(setSaved);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (!showDropdown || suggestions.length === 0) {
+      if (e.key === "Enter") handleSearch();
+      return;
+    }
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlightIdx((prev) => (prev < suggestions.length - 1 ? prev + 1 : 0));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlightIdx((prev) => (prev > 0 ? prev - 1 : suggestions.length - 1));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (highlightIdx >= 0 && highlightIdx < suggestions.length) {
+        selectSuggestion(suggestions[highlightIdx]);
+      } else {
+        handleSearch();
+      }
+    } else if (e.key === "Escape") {
+      setShowDropdown(false);
+    }
   };
 
   const financials = useQuery({
@@ -160,14 +232,36 @@ function SearchPage() {
 
       {/* Search Bar */}
       <div className="flex gap-3">
-        <input
-          type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleSearch()}
-          placeholder="종목코드 입력 (예: AAPL, 005930)"
-          className="flex-1 px-4 py-2.5 rounded-lg bg-[var(--card)] border border-[var(--card-border)] text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:border-blue-500"
-        />
+        <div className="relative flex-1" ref={dropdownRef}>
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => handleInputChange(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onFocus={() => suggestions.length > 0 && setShowDropdown(true)}
+            placeholder="종목명 또는 코드 검색 (예: 한화, AAPL, 005930)"
+            className="w-full px-4 py-2.5 rounded-lg bg-[var(--card)] border border-[var(--card-border)] text-[var(--foreground)] placeholder:text-[var(--muted)] focus:outline-none focus:border-blue-500"
+          />
+          {showDropdown && suggestions.length > 0 && (
+            <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-[var(--card)] border border-[var(--card-border)] rounded-lg shadow-lg overflow-hidden max-h-80 overflow-y-auto">
+              {suggestions.map((item, idx) => (
+                <button
+                  key={`${item.ticker}-${idx}`}
+                  onMouseDown={(e) => { e.preventDefault(); selectSuggestion(item); }}
+                  className={`w-full px-4 py-2.5 flex items-center justify-between text-left transition-colors ${
+                    idx === highlightIdx ? "bg-blue-600/20" : "hover:bg-[var(--background)]"
+                  }`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="font-medium truncate">{item.name}</span>
+                    <span className="text-sm text-[var(--muted)] shrink-0">{item.ticker}</span>
+                  </div>
+                  <span className="text-xs text-[var(--muted)] ml-2 shrink-0">{item.market}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <button
           onClick={handleSearch}
           className="px-6 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
@@ -186,8 +280,8 @@ function SearchPage() {
 
       {!ticker && (
         <div className="text-center py-20 text-[var(--muted)]">
-          <p className="text-lg">종목코드를 입력하고 분석을 시작하세요</p>
-          <p className="text-sm mt-2">숫자 6자리 → 한국 주식 (KOSPI) | 알파벳 → 미국 주식 (NASDAQ)</p>
+          <p className="text-lg">종목명 또는 코드를 입력하고 분석을 시작하세요</p>
+          <p className="text-sm mt-2">종목명 검색 (예: 한화, apple) | 숫자 6자리 → 한국 주식 | 알파벳 코드 → 미국 주식</p>
         </div>
       )}
 
@@ -262,18 +356,18 @@ function SearchPage() {
                   <span className="text-xs text-[var(--muted)]">
                     {sc.signal === "SELL" ? "재매수 검토가" : "매수 추천가"}
                   </span>
-                  <span className="text-lg font-bold text-blue-400">{formatPrice(sc.entry_price?.consensus)}</span>
+                  <span className="text-lg font-bold text-blue-400">{formatPrice(sc.entry_price?.consensus, market)}</span>
                   {sc.entry_price?.discount_pct > 0 && (
                     <span className="text-xs text-[var(--muted)]">-{sc.entry_price.discount_pct}%</span>
                   )}
                 </div>
                 <div className="flex flex-col items-center gap-2 py-2">
                   <span className="text-xs text-[var(--muted)]">목표가</span>
-                  <span className="text-lg font-bold text-green-400">{formatPrice(sc.target.consensus)}</span>
+                  <span className="text-lg font-bold text-green-400">{formatPrice(sc.target.consensus, market)}</span>
                 </div>
                 <div className="flex flex-col items-center gap-2 py-2">
                   <span className="text-xs text-[var(--muted)]">손절가</span>
-                  <span className="text-lg font-bold text-red-400">{formatPrice(sc.stop_loss.final)}</span>
+                  <span className="text-lg font-bold text-red-400">{formatPrice(sc.stop_loss.final, market)}</span>
                 </div>
                 <div className="flex flex-col items-center gap-2 py-2">
                   <span className="text-xs text-[var(--muted)]">R:R 비율</span>
@@ -322,7 +416,7 @@ function SearchPage() {
                     {sc.entry_price.methods.map((m: { method: string; price: number; rationale: string }, i: number) => (
                       <div key={i} className="text-xs px-3 py-2 rounded bg-[var(--background)]">
                         <span className="text-blue-400 font-medium">{m.method}</span>
-                        <p className="font-medium mt-0.5">{formatPrice(m.price)}</p>
+                        <p className="font-medium mt-0.5">{formatPrice(m.price, market)}</p>
                         <p className="text-[var(--muted)] mt-0.5">{m.rationale}</p>
                       </div>
                     ))}
@@ -338,7 +432,7 @@ function SearchPage() {
                     {sc.target.methods.map((m: { method: string; price: number }, i: number) => (
                       <div key={i} className="text-xs px-3 py-2 rounded bg-[var(--background)]">
                         <span className="text-[var(--muted)]">{m.method}</span>
-                        <p className="font-medium mt-0.5">{formatPrice(m.price)}</p>
+                        <p className="font-medium mt-0.5">{formatPrice(m.price, market)}</p>
                       </div>
                     ))}
                   </div>
@@ -383,7 +477,7 @@ function SearchPage() {
                 <div className="flex justify-between">
                   <span className="text-[var(--muted)]">현재가</span>
                   <span className="font-medium">
-                    {fin?.current_price?.toLocaleString() ?? "-"}
+                    {formatPrice(fin?.current_price, market)}
                     {fin?.change_pct != null && (
                       <span className={`ml-2 ${fin.change_pct >= 0 ? "text-green-400" : "text-red-400"}`}>
                         {fin.change_pct >= 0 ? "+" : ""}{fin.change_pct}%
@@ -393,11 +487,11 @@ function SearchPage() {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-[var(--muted)]">52주 최고</span>
-                  <span>{fin?.["52w_high"]?.toLocaleString() ?? "-"}</span>
+                  <span>{formatPrice(fin?.["52w_high"], market)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-[var(--muted)]">52주 최저</span>
-                  <span>{fin?.["52w_low"]?.toLocaleString() ?? "-"}</span>
+                  <span>{formatPrice(fin?.["52w_low"], market)}</span>
                 </div>
               </div>
             </div>
@@ -453,7 +547,7 @@ function SearchPage() {
               </div>
               <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4">
                 <p className="text-xs text-[var(--muted)] mb-1">ATR (14)</p>
-                <p className="text-2xl font-bold">{formatPrice(indicators.atr)}</p>
+                <p className="text-2xl font-bold">{formatPrice(indicators.atr, market)}</p>
                 <p className="text-xs text-[var(--muted)] mt-1">변동성 {indicators.atr_pct.toFixed(1)}%</p>
               </div>
               <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4">
@@ -618,7 +712,7 @@ function SearchPage() {
                   <div className="flex justify-between">
                     <span className="text-green-400">지지선</span>
                     <span>
-                      {details.support_resistance.nearest_support.toLocaleString()} ({details.support_resistance.support_distance_pct}%)
+                      {formatPrice(details.support_resistance.nearest_support, market)} ({details.support_resistance.support_distance_pct}%)
                     </span>
                   </div>
                 )}
@@ -626,7 +720,7 @@ function SearchPage() {
                   <div className="flex justify-between">
                     <span className="text-red-400">저항선</span>
                     <span>
-                      {details.support_resistance.nearest_resistance.toLocaleString()} ({details.support_resistance.resistance_distance_pct}%)
+                      {formatPrice(details.support_resistance.nearest_resistance, market)} ({details.support_resistance.resistance_distance_pct}%)
                     </span>
                   </div>
                 )}
@@ -680,7 +774,7 @@ function SearchPage() {
                       <span className="text-[var(--muted)]">
                         {isExt ? `확장 ${displayLevel}` : displayLevel}
                       </span>
-                      <p className="font-medium mt-0.5">{formatPrice(price)}</p>
+                      <p className="font-medium mt-0.5">{formatPrice(price, market)}</p>
                     </div>
                   );
                 })}

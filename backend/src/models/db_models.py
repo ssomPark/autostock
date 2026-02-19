@@ -1,4 +1,4 @@
-"""SQLAlchemy ORM models for AutoStock database."""
+"""SQLAlchemy ORM models for TradeRadar database."""
 
 from datetime import datetime
 
@@ -289,6 +289,7 @@ class PaperTradeModel(Base):
     quantity = Column(Integer, nullable=False)
     price = Column(Float, nullable=False)
     total_amount = Column(Float, nullable=False)
+    exchange_rate = Column(Float, nullable=True)  # USD/KRW rate at trade time
     realized_pnl = Column(Float, nullable=True)
     realized_pnl_pct = Column(Float, nullable=True)
     source = Column(String(20), nullable=False, default="manual")  # "manual" / "recommendation"

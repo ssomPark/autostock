@@ -8,6 +8,11 @@ import {
   fetchPipelineStatus,
   fetchPipelineHistory,
 } from "@/lib/api";
+import { useAuth } from "@/lib/auth-context";
+
+interface ApiError extends Error {
+  status?: number;
+}
 
 /* ─── Types ─── */
 
@@ -387,8 +392,10 @@ function HistoryTab() {
 /* ─── Main Page ─── */
 
 export default function PipelinePage() {
+  const { user, isLoading: authLoading, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<"run" | "history">("run");
   const [market, setMarket] = useState("KR");
+  const [adminError, setAdminError] = useState<string | null>(null);
   const [state, setState] = useState<PipelineState>({
     pipeline_id: null,
     market: null,
@@ -444,6 +451,7 @@ export default function PipelinePage() {
   const mutation = useMutation({
     mutationFn: (mkt: string) => triggerPipeline(mkt),
     onSuccess: async () => {
+      setAdminError(null);
       try {
         const res = await fetchPipelineStatus();
         if (res?.data) handleEvent(res.data);
@@ -451,6 +459,18 @@ export default function PipelinePage() {
         // ignore
       }
     },
+    onError: (err: ApiError) => {
+      const status = err.status ?? (err.message.includes("403") ? 403 : err.message.includes("401") ? 401 : 0);
+      if (status === 403) {
+        setAdminError("관리자만 파이프라인을 실행할 수 있습니다.");
+      } else if (status === 401) {
+        setAdminError("세션이 만료되었습니다. 다시 로그인해주세요.");
+        logout();
+      } else {
+        setAdminError(`파이프라인 실행 실패: ${err.message}`);
+      }
+    },
+    retry: false,
   });
 
   const isRunning = state.status === "running";
@@ -513,16 +533,27 @@ export default function PipelinePage() {
                 ))}
               </div>
               <button
-                onClick={() => mutation.mutate(market)}
-                disabled={isRunning || mutation.isPending}
+                onClick={() => { setAdminError(null); mutation.mutate(market); }}
+                disabled={isRunning || mutation.isPending || authLoading || !user}
+                title={!user && !authLoading ? "로그인이 필요합니다" : undefined}
                 className="px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded font-medium text-sm transition-colors w-full sm:w-auto"
               >
                 {isRunning ? "실행 중..." : mutation.isPending ? "시작 중..." : "파이프라인 실행"}
               </button>
             </div>
-            {market === "ALL" && !isRunning && (
+            {!user && !authLoading && (
+              <p className="text-xs text-amber-400 mt-2">
+                파이프라인을 실행하려면 로그인이 필요합니다.
+              </p>
+            )}
+            {market === "ALL" && !isRunning && user && (
               <p className="text-xs text-[var(--muted)] mt-2">
                 한국 시장 완료 후 미국 시장을 순차 실행합니다.
+              </p>
+            )}
+            {adminError && (
+              <p className="text-xs text-red-400 mt-2">
+                {adminError}
               </p>
             )}
           </div>

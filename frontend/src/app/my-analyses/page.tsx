@@ -5,12 +5,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { fetchSavedAnalyses, deleteSavedAnalysisAPI } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
-
-function formatPrice(price: number | null | undefined): string {
-  if (price == null || price === 0) return "-";
-  if (price >= 1000) return price.toLocaleString(undefined, { maximumFractionDigits: 0 });
-  return price.toLocaleString(undefined, { maximumFractionDigits: 2 });
-}
+import { formatPrice } from "@/lib/format";
 
 const gradeColor: Record<string, string> = {
   "A+": "#4ade80", A: "#4ade80",
@@ -300,7 +295,7 @@ export default function MyAnalysesPage() {
                 <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3 text-sm">
                   <div>
                     <span className="text-[var(--muted)] text-xs">현재가</span>
-                    <p className="font-medium">{formatPrice(item.current_price)}</p>
+                    <p className="font-medium">{formatPrice(item.current_price, item.market)}</p>
                   </div>
                   <div>
                     <span className="text-[var(--muted)] text-xs">신뢰도</span>
@@ -314,11 +309,11 @@ export default function MyAnalysesPage() {
                   </div>
                   <div>
                     <span className="text-[var(--muted)] text-xs">목표가</span>
-                    <p className="font-medium" style={{ color: "#4ade80" }}>{formatPrice(sc.target?.consensus)}</p>
+                    <p className="font-medium" style={{ color: "#4ade80" }}>{formatPrice(sc.target?.consensus, item.market)}</p>
                   </div>
                   <div>
                     <span className="text-[var(--muted)] text-xs">손절가</span>
-                    <p className="font-medium" style={{ color: "#f87171" }}>{formatPrice(sc.stop_loss?.final)}</p>
+                    <p className="font-medium" style={{ color: "#f87171" }}>{formatPrice(sc.stop_loss?.final, item.market)}</p>
                   </div>
                   <div>
                     <span className="text-[var(--muted)] text-xs">R:R</span>

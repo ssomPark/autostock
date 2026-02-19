@@ -10,8 +10,8 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-4o"
 
     # Database
-    database_url: str = "postgresql+asyncpg://autostock:autostock@localhost:5432/autostock"
-    database_url_sync: str = "postgresql://autostock:autostock@localhost:5432/autostock"
+    database_url: str = "postgresql+asyncpg://traderadar:traderadar@localhost:5432/traderadar"
+    database_url_sync: str = "postgresql://traderadar:traderadar@localhost:5432/traderadar"
 
     # Redis
     redis_url: str = "redis://localhost:6379/0"
@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     jwt_access_token_expire_minutes: int = 15
     jwt_refresh_token_expire_days: int = 7
 
+    # Admin
+    admin_emails: str = ""  # 쉼표 구분, .env에서 로드
+
     # Server
     api_host: str = "0.0.0.0"
     api_port: int = 8000
@@ -48,7 +51,7 @@ class Settings(BaseSettings):
 
     # N8N
     n8n_webhook_url: str = "http://n8n_live:5678/webhook/autostock-pipeline"
-    n8n_backend_url: str = "http://autostock-backend:8000"
+    n8n_backend_url: str = "http://traderadar-backend:8000"
 
     # Paths
     base_dir: Path = Path(__file__).resolve().parent.parent.parent

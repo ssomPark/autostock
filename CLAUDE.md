@@ -96,7 +96,7 @@ News: 20% | Candlestick: 20% | ChartPattern: 25% | S/R: 20% | Volume: 15%
 
 `backend/.env.example` 참조. 핵심:
 - `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`: LLM
-- `DATABASE_URL`: `postgresql+asyncpg://autostock:autostock@localhost:5432/autostock`
+- `DATABASE_URL`: `postgresql+asyncpg://traderadar:traderadar@localhost:5432/traderadar`
 - `KIS_APP_KEY` / `KIS_APP_SECRET`: 한국투자증권 API
 - `NAVER_CLIENT_ID` / `NAVER_CLIENT_SECRET`: 네이버 뉴스 API
-- `N8N_WEBHOOK_URL`: N8N 파이프라인 트리거
+- `N8N_WEBHOOK_URL`: N8N 파이프라인 트리거 (`/webhook/traderadar-pipeline`)

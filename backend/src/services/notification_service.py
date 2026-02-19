@@ -58,7 +58,7 @@ class NotificationService:
         if not recommendations:
             return
 
-        lines = ["## AutoStock 투자 추천\n"]
+        lines = ["## TradeRadar 투자 추천\n"]
         for rec in recommendations:
             action = rec.get("action", "HOLD")
             ticker = rec.get("ticker", "")

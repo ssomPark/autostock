@@ -1,5 +1,5 @@
 [project]
-name = "autostock"
+name = "traderadar"
 version = "0.1.0"
 description = "Multi-Agent Stock Analysis System"
 requires-python = ">=3.11"

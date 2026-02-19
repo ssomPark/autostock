@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.auth.dependencies import get_admin_user
 from src.config.settings import settings
 from src.db.database import get_async_session
 from src.services.pipeline_tracker import tracker
@@ -41,6 +42,7 @@ async def _trigger_n8n_webhook(pipeline_id: str, market_type: str) -> None:
 @router.post("/run")
 async def trigger_pipeline(
     market: str = Query("KR", description="Market type: KR, US, or ALL"),
+    user=Depends(get_admin_user),
 ):
     """Trigger the daily analysis pipeline via N8N webhook."""
     import asyncio

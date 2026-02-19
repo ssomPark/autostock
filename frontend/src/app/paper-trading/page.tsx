@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import Link from "next/link";
+import { useLivePrices } from "@/hooks/use-live-prices";
 import {
   fetchPaperAccounts,
   createPaperAccount,
@@ -15,7 +16,11 @@ import {
   executePaperSell,
   executePaperBuy,
   fetchRecommendations,
+  fetchExchangeRate,
+  fetchLeaderboard,
 } from "@/lib/api";
+import type { LeaderboardEntry, LeaderboardResponse } from "@/lib/api";
+import { useQuery } from "@tanstack/react-query";
 import { OrderModal } from "@/components/paper-trading/order-modal";
 
 interface Account {
@@ -41,6 +46,10 @@ interface Position {
   unrealized_pnl: number;
   unrealized_pnl_pct: number;
   price_fallback?: boolean;
+  exchange_rate?: number | null;
+  stock_pnl?: number | null;
+  fx_pnl?: number | null;
+  buy_exchange_rate?: number | null;
   recommendation_action?: string;
   recommendation_confidence?: number;
   recommendation_grade?: string;
@@ -55,6 +64,7 @@ interface Trade {
   quantity: number;
   price: number;
   total_amount: number;
+  exchange_rate?: number | null;
   realized_pnl: number | null;
   realized_pnl_pct: number | null;
   source: string;
@@ -76,6 +86,12 @@ interface Summary {
 
 function formatKRW(value: number) {
   return value.toLocaleString("ko-KR", { maximumFractionDigits: 0 });
+}
+
+function formatPrice(value: number, market: string) {
+  const isUS = ["NYSE", "NASDAQ"].includes(market);
+  if (isUS) return `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `${formatKRW(value)}원`;
 }
 
 function PnlText({ value, pct }: { value: number; pct?: number }) {
@@ -108,11 +124,29 @@ function SellModal({
   const [quantity, setQuantity] = useState(position.quantity);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sellRate, setSellRate] = useState<number | null>(position.exchange_rate ?? null);
 
-  const totalRevenue = quantity * position.current_price;
-  const costBasis = position.avg_buy_price * quantity;
-  const pnl = totalRevenue - costBasis;
-  const pnlPct = costBasis > 0 ? (pnl / costBasis) * 100 : 0;
+  const isUS = ["NYSE", "NASDAQ"].includes(position.market);
+
+  useEffect(() => {
+    if (isUS) {
+      fetchExchangeRate()
+        .then((d) => setSellRate(d.rate))
+        .catch(() => {});
+    }
+  }, [isUS]);
+
+  // 매도 금액 (KRW): US면 환율 적용
+  const totalRevenueKRW = isUS && sellRate
+    ? quantity * position.current_price * sellRate
+    : quantity * position.current_price;
+
+  // 원가 (KRW): total_invested 기반
+  const costPerShareKRW = position.total_invested / position.quantity;
+  const costBasisKRW = costPerShareKRW * quantity;
+
+  const pnl = totalRevenueKRW - costBasisKRW;
+  const pnlPct = costBasisKRW > 0 ? (pnl / costBasisKRW) * 100 : 0;
 
   const handleSell = async () => {
     if (quantity <= 0 || quantity > position.quantity) return;
@@ -146,12 +180,20 @@ function SellModal({
         </div>
         <div className="space-y-4">
           <div className="bg-white/5 rounded-lg p-3">
-            <span className="font-medium">{position.name}</span>
-            <span className="text-[var(--muted)] text-sm ml-1">({position.ticker})</span>
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="font-medium">{position.name}</span>
+                <span className="text-[var(--muted)] text-sm ml-1">({position.ticker})</span>
+              </div>
+              {isUS && <span className="text-xs px-2 py-0.5 rounded bg-blue-600/20 text-blue-400">{position.market}</span>}
+            </div>
             <div className="grid grid-cols-2 gap-2 mt-2 text-sm">
               <div><span className="text-[var(--muted)]">보유</span> <span className="font-medium">{position.quantity}주</span></div>
-              <div><span className="text-[var(--muted)]">평균매수가</span> <span className="font-medium">{formatKRW(position.avg_buy_price)}</span></div>
-              <div><span className="text-[var(--muted)]">현재가</span> <span className="font-medium">{formatKRW(position.current_price)}</span></div>
+              <div><span className="text-[var(--muted)]">평균매수가</span> <span className="font-medium">{formatPrice(position.avg_buy_price, position.market)}</span></div>
+              <div><span className="text-[var(--muted)]">현재가</span> <span className="font-medium">{formatPrice(position.current_price, position.market)}</span></div>
+              {isUS && sellRate && (
+                <div><span className="text-[var(--muted)]">환율</span> <span className="font-medium">₩{sellRate.toLocaleString()}</span></div>
+              )}
             </div>
           </div>
           <div>
@@ -162,8 +204,14 @@ function SellModal({
                 type="number"
                 min={1}
                 max={position.quantity}
-                value={quantity}
-                onChange={(e) => setQuantity(Math.min(position.quantity, Math.max(1, parseInt(e.target.value) || 1)))}
+                value={quantity || ""}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === "") { setQuantity(0); return; }
+                  setQuantity(Math.min(position.quantity, Math.max(0, parseInt(v) || 0)));
+                }}
+                onFocus={(e) => e.target.select()}
+                onBlur={() => { if (quantity < 1) setQuantity(1); }}
                 className="flex-1 h-10 rounded-lg bg-white/5 border border-[var(--card-border)] px-3 text-center text-lg font-medium focus:outline-none focus:border-blue-500"
               />
               <button onClick={() => setQuantity(Math.min(position.quantity, quantity + 1))} className="w-10 h-10 rounded-lg bg-white/5 hover:bg-white/10 transition-colors flex items-center justify-center text-lg">+</button>
@@ -188,8 +236,14 @@ function SellModal({
           <div className="bg-white/5 rounded-lg p-3 space-y-1">
             <div className="flex justify-between text-sm">
               <span className="text-[var(--muted)]">매도 금액</span>
-              <span className="font-medium">{formatKRW(totalRevenue)}원</span>
+              <span className="font-medium">{formatKRW(totalRevenueKRW)}원</span>
             </div>
+            {isUS && sellRate && (
+              <div className="flex justify-between text-xs text-[var(--muted)]">
+                <span>USD</span>
+                <span>${(quantity * position.current_price).toLocaleString("en-US", { minimumFractionDigits: 2 })}</span>
+              </div>
+            )}
             <div className="flex justify-between text-sm">
               <span className="text-[var(--muted)]">예상 손익</span>
               <PnlText value={pnl} pct={pnlPct} />
@@ -203,12 +257,183 @@ function SellModal({
           )}
           <button
             onClick={handleSell}
-            disabled={loading}
+            disabled={loading || (isUS && !sellRate)}
             className="w-full py-3 rounded-lg bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium transition-colors"
           >
-            {loading ? "매도 중..." : `${quantity}주 매도`}
+            {loading ? "매도 중..." : isUS && !sellRate ? "환율 조회 중..." : `${quantity}주 매도 (${formatKRW(totalRevenueKRW)}원)`}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// --- Leaderboard View ---
+const MEDALS: Record<number, string> = { 1: "\uD83E\uDD47", 2: "\uD83E\uDD48", 3: "\uD83E\uDD49" };
+
+function LeaderboardView() {
+  const { data, isLoading, error } = useQuery<LeaderboardResponse>({
+    queryKey: ["leaderboard"],
+    queryFn: fetchLeaderboard,
+    refetchInterval: 5 * 60 * 1000,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <div className="text-[var(--muted)]">랭킹 로딩 중...</div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 gap-2">
+        <svg className="w-8 h-8 text-red-400" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
+        <p className="text-[var(--muted)] text-sm">랭킹을 불러올 수 없습니다.</p>
+      </div>
+    );
+  }
+
+  const entries = data?.entries ?? [];
+
+  if (entries.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 gap-2">
+        <div className="text-4xl">&#x1F3C6;</div>
+        <p className="text-[var(--muted)]">아직 참여자가 없습니다.</p>
+        <p className="text-[var(--muted)] text-sm">모의 투자 계좌를 만들면 자동으로 랭킹에 참여됩니다.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {data?.updated_at && (
+        <p className="text-xs text-[var(--muted)]">
+          마지막 업데이트: {new Date(data.updated_at).toLocaleString("ko-KR")}
+        </p>
+      )}
+
+      {/* Mobile cards */}
+      <div className="md:hidden space-y-2">
+        {entries.map((entry) => {
+          const isMe = entry.user_id === data?.current_user_id;
+          return (
+            <div
+              key={`${entry.user_id}-${entry.rank}`}
+              className={`bg-[var(--card)] border rounded-lg p-4 ${
+                isMe ? "border-blue-500 ring-1 ring-blue-500/30" : "border-[var(--card-border)]"
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <div className="text-2xl w-10 text-center shrink-0">
+                  {MEDALS[entry.rank] ?? <span className="text-base font-bold text-[var(--muted)]">{entry.rank}</span>}
+                </div>
+                <div className="flex items-center gap-2 min-w-0 flex-1">
+                  {entry.user_avatar ? (
+                    <img src={entry.user_avatar} alt="" className="w-8 h-8 rounded-full shrink-0" />
+                  ) : (
+                    <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-sm shrink-0">
+                      {entry.user_name[0]}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <div className="font-medium text-sm truncate">
+                      {entry.user_name}
+                      {isMe && <span className="ml-1 text-xs text-blue-400">(나)</span>}
+                    </div>
+                    <div className="text-xs text-[var(--muted)]">{entry.account_name}</div>
+                  </div>
+                </div>
+                <div className="text-right shrink-0">
+                  <div
+                    className="font-bold text-lg"
+                    style={{ color: entry.return_pct >= 0 ? "#4ade80" : "#f87171" }}
+                  >
+                    {entry.return_pct > 0 ? "+" : ""}{entry.return_pct.toFixed(2)}%
+                  </div>
+                  <div className="text-xs text-[var(--muted)]">
+                    {entry.total_pnl >= 0 ? "+" : ""}{entry.total_pnl.toLocaleString("ko-KR", { maximumFractionDigits: 0 })}원
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 mt-2 text-xs text-[var(--muted)] ml-[52px]">
+                <span>총 자산 {entry.total_value.toLocaleString("ko-KR", { maximumFractionDigits: 0 })}원</span>
+                <span>거래 {entry.trade_count}회</span>
+                <span>종목 {entry.position_count}개</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Desktop table */}
+      <div className="hidden md:block bg-[var(--card)] border border-[var(--card-border)] rounded-lg overflow-hidden">
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-[var(--card-border)] text-left text-sm text-[var(--muted)]">
+              <th className="p-3 w-16 text-center">순위</th>
+              <th className="p-3">사용자</th>
+              <th className="p-3 text-right">수익률</th>
+              <th className="p-3 text-right">총 수익금</th>
+              <th className="p-3 text-right">총 자산</th>
+              <th className="p-3 text-right">거래</th>
+              <th className="p-3 text-right">종목</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.map((entry) => {
+              const isMe = entry.user_id === data?.current_user_id;
+              return (
+                <tr
+                  key={`${entry.user_id}-${entry.rank}`}
+                  className={`border-b border-[var(--card-border)] text-sm ${
+                    isMe ? "bg-blue-500/10" : "hover:bg-white/5"
+                  }`}
+                >
+                  <td className="p-3 text-center text-lg">
+                    {MEDALS[entry.rank] ?? <span className="text-sm font-bold text-[var(--muted)]">{entry.rank}위</span>}
+                  </td>
+                  <td className="p-3">
+                    <div className="flex items-center gap-2">
+                      {entry.user_avatar ? (
+                        <img src={entry.user_avatar} alt="" className="w-7 h-7 rounded-full" />
+                      ) : (
+                        <div className="w-7 h-7 rounded-full bg-white/10 flex items-center justify-center text-xs">
+                          {entry.user_name[0]}
+                        </div>
+                      )}
+                      <div>
+                        <span className="font-medium">{entry.user_name}</span>
+                        {isMe && <span className="ml-1 text-xs text-blue-400">(나)</span>}
+                        <div className="text-xs text-[var(--muted)]">{entry.account_name}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="p-3 text-right">
+                    <span
+                      className="font-bold"
+                      style={{ color: entry.return_pct >= 0 ? "#4ade80" : "#f87171" }}
+                    >
+                      {entry.return_pct > 0 ? "+" : ""}{entry.return_pct.toFixed(2)}%
+                    </span>
+                  </td>
+                  <td className="p-3 text-right">
+                    <span style={{ color: entry.total_pnl >= 0 ? "#4ade80" : "#f87171" }}>
+                      {entry.total_pnl >= 0 ? "+" : ""}{entry.total_pnl.toLocaleString("ko-KR", { maximumFractionDigits: 0 })}원
+                    </span>
+                  </td>
+                  <td className="p-3 text-right">
+                    {entry.total_value.toLocaleString("ko-KR", { maximumFractionDigits: 0 })}원
+                  </td>
+                  <td className="p-3 text-right">{entry.trade_count}회</td>
+                  <td className="p-3 text-right">{entry.position_count}개</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );
@@ -281,8 +506,14 @@ function ManualBuyForm({ accountId, onSuccess }: { accountId: number; onSuccess:
           <input
             type="number"
             min={1}
-            value={quantity}
-            onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+            value={quantity || ""}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === "") { setQuantity(0); return; }
+              setQuantity(Math.max(0, parseInt(v) || 0));
+            }}
+            onFocus={(e) => e.target.select()}
+            onBlur={() => { if (quantity < 1) setQuantity(1); }}
             className="w-20 h-10 rounded-lg bg-white/5 border border-[var(--card-border)] px-3 text-sm text-center focus:outline-none focus:border-blue-500"
           />
           <span className="text-sm text-[var(--muted)]">주</span>
@@ -304,10 +535,12 @@ function ManualBuyForm({ accountId, onSuccess }: { accountId: number; onSuccess:
 function RecommendedBuyList({
   accountId,
   ownedTickers,
+  cashBalance,
   onSuccess,
 }: {
   accountId: number;
   ownedTickers: Set<string>;
+  cashBalance?: number;
   onSuccess: () => void;
 }) {
   const [recs, setRecs] = useState<any[]>([]);
@@ -371,11 +604,11 @@ function RecommendedBuyList({
                   <span className="text-xs text-[var(--muted)] shrink-0">({rec.ticker})</span>
                 </div>
                 <div className="flex items-center gap-3 mt-1 text-xs text-[var(--muted)]">
-                  <span>{rec.current_price?.toLocaleString()}원</span>
+                  <span>{formatPrice(rec.current_price, rec.market)}</span>
                   <span>신뢰도 {(rec.confidence * 100).toFixed(0)}%</span>
                   {rec.target_price && (
                     <span style={{ color: "#4ade80" }}>
-                      목표 {rec.target_price.toLocaleString()}
+                      목표 {formatPrice(rec.target_price, rec.market)}
                     </span>
                   )}
                 </div>
@@ -427,9 +660,9 @@ function RecommendedBuyList({
                       <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-blue-600/20 text-blue-400">보유중</span>
                     )}
                   </td>
-                  <td className="p-2.5 text-right">{rec.current_price?.toLocaleString()}</td>
+                  <td className="p-2.5 text-right">{formatPrice(rec.current_price, rec.market)}</td>
                   <td className="p-2.5 text-right" style={{ color: "#4ade80" }}>
-                    {rec.target_price?.toLocaleString() ?? "-"}
+                    {rec.target_price ? formatPrice(rec.target_price, rec.market) : "-"}
                   </td>
                   <td className="p-2.5 text-right">
                     {expectedPct != null ? (
@@ -473,6 +706,7 @@ function RecommendedBuyList({
           name={orderTarget.name}
           market={orderTarget.market}
           price={orderTarget.current_price}
+          cashBalance={cashBalance}
           source="recommendation"
           recommendationId={orderTarget.id}
           recommendationAction={orderTarget.action}
@@ -508,6 +742,12 @@ export default function PaperTradingPage() {
   const [showSettings, setShowSettings] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  // Tab
+  const [activeTab, setActiveTab] = useState<"portfolio" | "ranking">("portfolio");
+
+  // Live market status for auto-refresh
+  const { marketStatus, isAnyMarketOpen } = useLivePrices({ enabled: isAuthenticated });
 
   const loadData = useCallback(async (accountId: number) => {
     try {
@@ -551,6 +791,17 @@ export default function PaperTradingPage() {
       setLoading(false);
     }
   }, [authLoading, isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-refresh positions/summary every 30s when market is open
+  const activeIdRef = useRef(activeAccountId);
+  activeIdRef.current = activeAccountId;
+  useEffect(() => {
+    if (!isAnyMarketOpen || !activeIdRef.current) return;
+    const id = setInterval(() => {
+      if (activeIdRef.current) loadData(activeIdRef.current);
+    }, 30_000);
+    return () => clearInterval(id);
+  }, [isAnyMarketOpen, loadData]);
 
   const handleCreateAccount = async () => {
     setCreating(true);
@@ -607,16 +858,48 @@ export default function PaperTradingPage() {
 
   if (!isAuthenticated) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[50vh] gap-4">
-        <div className="text-6xl">🔒</div>
-        <h2 className="text-xl font-bold">로그인이 필요합니다</h2>
-        <p className="text-[var(--muted)] text-center">모의 투자 기능을 사용하려면 로그인하세요.</p>
-        <button
-          onClick={() => router.push("/auth/login")}
-          className="px-6 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
-        >
-          로그인하기
-        </button>
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold">모의 투자</h1>
+        </div>
+        {/* Tabs — 비로그인 시 포트폴리오 탭 클릭하면 로그인 유도 */}
+        <div className="flex gap-1 border-b border-[var(--card-border)]">
+          <button
+            onClick={() => setActiveTab("portfolio")}
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === "portfolio"
+                ? "border-blue-500 text-blue-400"
+                : "border-transparent text-[var(--muted)] hover:text-[var(--foreground)]"
+            }`}
+          >
+            내 포트폴리오
+          </button>
+          <button
+            onClick={() => setActiveTab("ranking")}
+            className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === "ranking"
+                ? "border-blue-500 text-blue-400"
+                : "border-transparent text-[var(--muted)] hover:text-[var(--foreground)]"
+            }`}
+          >
+            랭킹
+          </button>
+        </div>
+        {activeTab === "ranking" ? (
+          <LeaderboardView />
+        ) : (
+          <div className="flex flex-col items-center justify-center min-h-[40vh] gap-4">
+            <div className="text-6xl">&#x1F512;</div>
+            <h2 className="text-xl font-bold">로그인이 필요합니다</h2>
+            <p className="text-[var(--muted)] text-center">모의 투자 기능을 사용하려면 로그인하세요.</p>
+            <button
+              onClick={() => router.push("/auth/login")}
+              className="px-6 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
+            >
+              로그인하기
+            </button>
+          </div>
+        )}
       </div>
     );
   }
@@ -691,7 +974,21 @@ export default function PaperTradingPage() {
     <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">모의 투자</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold">모의 투자</h1>
+          {marketStatus && (
+            <div className="flex items-center gap-2 text-xs">
+              <span className="inline-flex items-center gap-1">
+                <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: marketStatus.KR.is_open ? "#4ade80" : "#6b7280" }} />
+                KR
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: marketStatus.US.is_open ? "#4ade80" : "#6b7280" }} />
+                US
+              </span>
+            </div>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           {accounts.length > 1 && (
             <select
@@ -724,6 +1021,34 @@ export default function PaperTradingPage() {
         </div>
       </div>
 
+      {/* Tab Navigation */}
+      <div className="flex gap-1 border-b border-[var(--card-border)]">
+        <button
+          onClick={() => setActiveTab("portfolio")}
+          className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === "portfolio"
+              ? "border-blue-500 text-blue-400"
+              : "border-transparent text-[var(--muted)] hover:text-[var(--foreground)]"
+          }`}
+        >
+          내 포트폴리오
+        </button>
+        <button
+          onClick={() => setActiveTab("ranking")}
+          className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === "ranking"
+              ? "border-blue-500 text-blue-400"
+              : "border-transparent text-[var(--muted)] hover:text-[var(--foreground)]"
+          }`}
+        >
+          랭킹
+        </button>
+      </div>
+
+      {activeTab === "ranking" ? (
+        <LeaderboardView />
+      ) : (
+      <>
       {/* Summary Cards */}
       {summary && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -780,13 +1105,19 @@ export default function PaperTradingPage() {
                   </div>
                   <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm">
                     <div className="flex justify-between"><span className="text-[var(--muted)]">수량</span><span>{pos.quantity}주</span></div>
-                    <div className="flex justify-between"><span className="text-[var(--muted)]">평균매수가</span><span>{formatKRW(pos.avg_buy_price)}</span></div>
-                    <div className="flex justify-between"><span className="text-[var(--muted)]">현재가</span><span>{formatKRW(pos.current_price)}{pos.price_fallback && <span className="text-xs text-yellow-400 ml-1" title="실시간 가격 조회 불가, 매수가 기준">*</span>}</span></div>
-                    <div className="flex justify-between"><span className="text-[var(--muted)]">평가금액</span><span>{formatKRW(pos.eval_amount)}</span></div>
+                    <div className="flex justify-between"><span className="text-[var(--muted)]">평균매수가</span><span>{formatPrice(pos.avg_buy_price, pos.market)}</span></div>
+                    <div className="flex justify-between"><span className="text-[var(--muted)]">현재가</span><span>{formatPrice(pos.current_price, pos.market)}{pos.price_fallback && <span className="text-xs text-yellow-400 ml-1" title="실시간 가격 조회 불가, 매수가 기준">*</span>}</span></div>
+                    <div className="flex justify-between"><span className="text-[var(--muted)]">평가금액</span><span>{formatKRW(pos.eval_amount)}원</span></div>
                     <div className="col-span-2 flex justify-between">
                       <span className="text-[var(--muted)]">평가손익</span>
                       <PnlText value={pos.unrealized_pnl} pct={pos.unrealized_pnl_pct} />
                     </div>
+                    {pos.stock_pnl != null && pos.fx_pnl != null && (
+                      <div className="col-span-2 flex justify-end gap-3 text-xs text-[var(--muted)]">
+                        <span>주가 <span style={{ color: pos.stock_pnl >= 0 ? "#4ade80" : "#f87171" }}>{pos.stock_pnl >= 0 ? "+" : ""}{formatKRW(pos.stock_pnl)}</span></span>
+                        <span>환율 <span style={{ color: pos.fx_pnl >= 0 ? "#4ade80" : "#f87171" }}>{pos.fx_pnl >= 0 ? "+" : ""}{formatKRW(pos.fx_pnl)}</span></span>
+                      </div>
+                    )}
                   </div>
                   {pos.recommendation_action && (
                     <div className="flex items-center gap-2 mt-2 text-xs text-[var(--muted)]">
@@ -822,10 +1153,18 @@ export default function PaperTradingPage() {
                         <span className="text-[var(--muted)] text-sm ml-1">({pos.ticker})</span>
                       </td>
                       <td className="p-3 text-right">{pos.quantity}</td>
-                      <td className="p-3 text-right">{formatKRW(pos.avg_buy_price)}</td>
-                      <td className="p-3 text-right">{formatKRW(pos.current_price)}{pos.price_fallback && <span className="text-xs text-yellow-400 ml-1" title="실시간 가격 조회 불가, 매수가 기준">*</span>}</td>
-                      <td className="p-3 text-right">{formatKRW(pos.eval_amount)}</td>
-                      <td className="p-3 text-right"><PnlText value={pos.unrealized_pnl} /></td>
+                      <td className="p-3 text-right">{formatPrice(pos.avg_buy_price, pos.market)}</td>
+                      <td className="p-3 text-right">{formatPrice(pos.current_price, pos.market)}{pos.price_fallback && <span className="text-xs text-yellow-400 ml-1" title="실시간 가격 조회 불가, 매수가 기준">*</span>}</td>
+                      <td className="p-3 text-right">{formatKRW(pos.eval_amount)}원</td>
+                      <td className="p-3 text-right">
+                        <PnlText value={pos.unrealized_pnl} />
+                        {pos.stock_pnl != null && pos.fx_pnl != null && (
+                          <div className="flex justify-end gap-2 text-[10px] text-[var(--muted)] mt-0.5">
+                            <span>주가 <span style={{ color: pos.stock_pnl >= 0 ? "#4ade80" : "#f87171" }}>{pos.stock_pnl >= 0 ? "+" : ""}{formatKRW(pos.stock_pnl)}</span></span>
+                            <span>환율 <span style={{ color: pos.fx_pnl >= 0 ? "#4ade80" : "#f87171" }}>{pos.fx_pnl >= 0 ? "+" : ""}{formatKRW(pos.fx_pnl)}</span></span>
+                          </div>
+                        )}
+                      </td>
                       <td className="p-3 text-right">
                         <span style={{ color: pos.unrealized_pnl_pct >= 0 ? "#4ade80" : "#f87171", fontWeight: 500 }}>
                           {pos.unrealized_pnl_pct >= 0 ? "+" : ""}{pos.unrealized_pnl_pct.toFixed(2)}%
@@ -860,6 +1199,7 @@ export default function PaperTradingPage() {
         <RecommendedBuyList
           accountId={activeAccountId}
           ownedTickers={new Set(positions.map((p) => p.ticker))}
+          cashBalance={summary?.cash_balance}
           onSuccess={handleRefresh}
         />
       )}
@@ -903,7 +1243,7 @@ export default function PaperTradingPage() {
                         </span>
                       </div>
                       <div className="flex items-center justify-between text-sm">
-                        <span className="text-[var(--muted)]">{t.quantity}주 x {formatKRW(t.price)}</span>
+                        <span className="text-[var(--muted)]">{t.quantity}주 x {formatPrice(t.price, t.market)}</span>
                         <span className="font-medium">{formatKRW(t.total_amount)}원</span>
                       </div>
                       {t.realized_pnl != null && t.side === "SELL" && (
@@ -939,8 +1279,8 @@ export default function PaperTradingPage() {
                           </td>
                           <td className="p-3 font-medium">{t.name} <span className="text-[var(--muted)]">({t.ticker})</span></td>
                           <td className="p-3 text-right">{t.quantity}</td>
-                          <td className="p-3 text-right">{formatKRW(t.price)}</td>
-                          <td className="p-3 text-right">{formatKRW(t.total_amount)}</td>
+                          <td className="p-3 text-right">{formatPrice(t.price, t.market)}</td>
+                          <td className="p-3 text-right">{formatKRW(t.total_amount)}원</td>
                           <td className="p-3 text-right">
                             {t.side === "SELL" && t.realized_pnl != null ? (
                               <PnlText value={t.realized_pnl} pct={t.realized_pnl_pct ?? undefined} />
@@ -1013,6 +1353,8 @@ export default function PaperTradingPage() {
           onClose={() => setSellTarget(null)}
           onSuccess={handleRefresh}
         />
+      )}
+      </>
       )}
     </div>
   );

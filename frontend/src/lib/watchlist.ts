@@ -1,6 +1,6 @@
 import { getAccessToken, fetchWatchlistAPI, addToWatchlistAPI, removeFromWatchlistAPI } from "@/lib/api";
 
-const STORAGE_KEY = "autostock-watchlist";
+const STORAGE_KEY = "traderadar-watchlist";
 
 export interface WatchlistItem {
   ticker: string;

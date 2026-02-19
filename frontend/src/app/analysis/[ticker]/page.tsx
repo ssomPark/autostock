@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { fetchAnalysis } from "@/lib/api";
 import { CandlestickChart } from "@/components/charts/candlestick-chart";
+import { formatPrice } from "@/lib/format";
 
 export default function AnalysisPage({ params }: { params: Promise<{ ticker: string }> }) {
   const { ticker } = use(params);
@@ -76,13 +77,13 @@ export default function AnalysisPage({ params }: { params: Promise<{ ticker: str
             {analysis?.support_resistance?.nearest_support && (
               <div className="flex justify-between">
                 <span className="text-green-400">지지선</span>
-                <span>{analysis.support_resistance.nearest_support.toLocaleString()} ({analysis.support_resistance.support_distance_pct}%)</span>
+                <span>{formatPrice(analysis.support_resistance.nearest_support, market)} ({analysis.support_resistance.support_distance_pct}%)</span>
               </div>
             )}
             {analysis?.support_resistance?.nearest_resistance && (
               <div className="flex justify-between">
                 <span className="text-red-400">저항선</span>
-                <span>{analysis.support_resistance.nearest_resistance.toLocaleString()} ({analysis.support_resistance.resistance_distance_pct}%)</span>
+                <span>{formatPrice(analysis.support_resistance.nearest_resistance, market)} ({analysis.support_resistance.resistance_distance_pct}%)</span>
               </div>
             )}
           </div>

@@ -1,4 +1,4 @@
-"""Pydantic schemas for AutoStock data models."""
+"""Pydantic schemas for TradeRadar data models."""
 
 from __future__ import annotations
 

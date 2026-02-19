@@ -1,4 +1,4 @@
-"""AutoStock entry point.
+"""TradeRadar entry point.
 
 Starts the FastAPI server with the daily scheduler.
 """
@@ -22,8 +22,8 @@ logger = logging.getLogger(__name__)
 
 
 def main():
-    """Start the AutoStock server."""
-    logger.info("Starting AutoStock Multi-Agent Stock Analysis System")
+    """Start the TradeRadar server."""
+    logger.info("Starting TradeRadar Multi-Agent Stock Analysis System")
     logger.info(f"API Server: {settings.api_host}:{settings.api_port}")
     logger.info(f"LLM Model: {settings.llm_model}")
 
@@ -33,6 +33,8 @@ def main():
         port=settings.api_port,
         reload=False,
         log_level="info",
+        proxy_headers=True,
+        forwarded_allow_ips="*",
     )
 
 

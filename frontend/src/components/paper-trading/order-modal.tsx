@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { executePaperBuy } from "@/lib/api";
+import { useState, useEffect } from "react";
+import { executePaperBuy, fetchExchangeRate } from "@/lib/api";
 
 interface OrderModalProps {
   isOpen: boolean;
@@ -12,6 +12,7 @@ interface OrderModalProps {
   name: string;
   market: string;
   price: number;
+  cashBalance?: number;
   source?: string;
   recommendationId?: number;
   recommendationAction?: string;
@@ -28,6 +29,7 @@ export function OrderModal({
   name,
   market,
   price,
+  cashBalance,
   source = "manual",
   recommendationId,
   recommendationAction,
@@ -37,10 +39,22 @@ export function OrderModal({
   const [quantity, setQuantity] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [exchangeRate, setExchangeRate] = useState<number | null>(null);
+
+  const isUS = ["NYSE", "NASDAQ"].includes(market);
+
+  useEffect(() => {
+    if (isUS && isOpen) {
+      fetchExchangeRate()
+        .then((d) => setExchangeRate(d.rate))
+        .catch(() => setExchangeRate(null));
+    }
+  }, [isUS, isOpen]);
 
   if (!isOpen) return null;
 
-  const totalCost = quantity * price;
+  const totalCostKRW = isUS && exchangeRate ? quantity * price * exchangeRate : quantity * price;
+  const insufficientBalance = cashBalance != null && totalCostKRW > cashBalance;
 
   const handleSubmit = async () => {
     if (quantity <= 0) {
@@ -107,7 +121,14 @@ export function OrderModal({
               </div>
               <span className="text-xs px-2 py-0.5 rounded bg-blue-600/20 text-blue-400">{market}</span>
             </div>
-            <div className="text-xl font-bold mt-1">{price.toLocaleString()}원</div>
+            <div className="text-xl font-bold mt-1">
+              {isUS ? `$${price.toLocaleString("en-US", { minimumFractionDigits: 2 })}` : `${price.toLocaleString()}원`}
+            </div>
+            {isUS && exchangeRate && (
+              <div className="text-xs text-[var(--muted)] mt-0.5">
+                환율: ₩{exchangeRate.toLocaleString()}/USD
+              </div>
+            )}
           </div>
 
           {/* Quantity input */}
@@ -123,8 +144,14 @@ export function OrderModal({
               <input
                 type="number"
                 min={1}
-                value={quantity}
-                onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                value={quantity || ""}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  if (v === "") { setQuantity(0); return; }
+                  setQuantity(Math.max(0, parseInt(v) || 0));
+                }}
+                onFocus={(e) => e.target.select()}
+                onBlur={() => { if (quantity < 1) setQuantity(1); }}
                 className="flex-1 h-10 rounded-lg bg-white/5 border border-[var(--card-border)] px-3 text-center text-lg font-medium focus:outline-none focus:border-blue-500"
               />
               <button
@@ -153,11 +180,26 @@ export function OrderModal({
           </div>
 
           {/* Total amount */}
-          <div className="bg-white/5 rounded-lg p-3">
+          <div className={`rounded-lg p-3 ${insufficientBalance ? "bg-red-400/10 border border-red-400/30" : "bg-white/5"}`}>
             <div className="flex items-center justify-between">
               <span className="text-[var(--muted)] text-sm">총 매수 금액</span>
-              <span className="text-lg font-bold">{totalCost.toLocaleString()}원</span>
+              <span className={`text-lg font-bold ${insufficientBalance ? "text-red-400" : ""}`}>
+                {totalCostKRW.toLocaleString("ko-KR", { maximumFractionDigits: 0 })}원
+              </span>
             </div>
+            {isUS && exchangeRate && (
+              <div className="text-right text-xs text-[var(--muted)] mt-0.5">
+                ${(quantity * price).toLocaleString("en-US", { minimumFractionDigits: 2 })} USD
+              </div>
+            )}
+            {insufficientBalance && cashBalance != null && (
+              <div className="flex items-center gap-1.5 mt-2 text-red-400 text-xs">
+                <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                </svg>
+                잔고가 부족합니다 ({(totalCostKRW - cashBalance).toLocaleString("ko-KR", { maximumFractionDigits: 0 })}원 부족)
+              </div>
+            )}
           </div>
 
           {/* Source badge */}
@@ -187,10 +229,16 @@ export function OrderModal({
 
           <button
             onClick={handleSubmit}
-            disabled={loading}
+            disabled={loading || (isUS && !exchangeRate) || insufficientBalance}
             className="w-full py-3 rounded-lg bg-green-600 hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium transition-colors"
           >
-            {loading ? "주문 실행 중..." : `${quantity}주 매수 (${totalCost.toLocaleString()}원)`}
+            {loading
+              ? "주문 실행 중..."
+              : insufficientBalance
+                ? "잔고 부족"
+                : isUS && !exchangeRate
+                  ? "환율 조회 중..."
+                  : `${quantity}주 매수 (${totalCostKRW.toLocaleString("ko-KR", { maximumFractionDigits: 0 })}원)`}
           </button>
         </div>
       </div>

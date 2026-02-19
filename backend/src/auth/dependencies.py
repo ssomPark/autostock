@@ -32,6 +32,17 @@ async def get_current_user(
     return user
 
 
+async def get_admin_user(
+    user: UserModel = Depends(get_current_user),
+) -> UserModel:
+    from src.config.settings import settings
+
+    admin_list = [e.strip().lower() for e in settings.admin_emails.split(",") if e.strip()]
+    if user.email.lower() not in admin_list:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    return user
+
+
 async def get_current_user_optional(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     session: AsyncSession = Depends(get_async_session),

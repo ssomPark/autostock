@@ -24,7 +24,7 @@ async def login(provider: str, request: Request):
     if provider not in ALLOWED_PROVIDERS:
         return {"error": f"Unsupported provider: {provider}"}
     client = oauth.create_client(provider)
-    redirect_uri = f"{request.base_url}api/auth/callback/{provider}"
+    redirect_uri = f"{settings.frontend_url}/api/auth/callback/{provider}"
     return await client.authorize_redirect(request, redirect_uri)
 
 

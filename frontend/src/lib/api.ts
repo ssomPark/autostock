@@ -1,7 +1,8 @@
 const API_BASE = "/api";
 
-// SSE connects directly to the backend to avoid Next.js proxy buffering
-const BACKEND_URL = "http://localhost:8000";
+// In production (behind reverse proxy), use same origin ("").
+// In local dev, fall back to direct backend URL to avoid Next.js SSE buffering.
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:8000";
 
 // --- Auth token management ---
 let _accessToken: string | null = null;
@@ -50,7 +51,11 @@ async function fetchWithAuth(url: string, options?: RequestInit) {
     }
   }
 
-  if (!res.ok) throw new Error(`API Error: ${res.status}`);
+  if (!res.ok) {
+    const err = new Error(`API Error: ${res.status}`) as Error & { status: number };
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
 
@@ -135,6 +140,16 @@ export function fetchRecommendations(params: { market: string; action: string })
   return fetchJSON(`/recommendations?${qs}`);
 }
 
+export interface StockSearchResult {
+  ticker: string;
+  name: string;
+  market: string;
+}
+
+export function searchStocks(q: string): Promise<{ results: StockSearchResult[] }> {
+  return fetchJSON(`/analysis/search?q=${encodeURIComponent(q)}`);
+}
+
 export function fetchAnalysis(ticker: string, market: string) {
   return fetchJSON(`/analysis/${ticker}?market=${market}`);
 }
@@ -152,7 +167,7 @@ export function fetchPipelineHistory(limit: number = 10) {
 }
 
 export function triggerPipeline(market: string) {
-  return fetchJSON(`/pipeline/run?market=${market}`, { method: "POST" });
+  return fetchWithAuth(`/api/pipeline/run?market=${market}`, { method: "POST" });
 }
 
 export function fetchOHLCV(ticker: string, market: string) {
@@ -243,6 +258,45 @@ export async function fetchPaperTrades(accountId: number, filters?: { ticker?: s
 
 export async function fetchPaperSummary(accountId: number) {
   return fetchWithAuth(`/api/paper/summary/${accountId}`);
+}
+
+export async function fetchExchangeRate(): Promise<{ rate: number; pair: string }> {
+  return fetchWithAuth("/api/paper/exchange-rate");
+}
+
+// --- Leaderboard API ---
+
+export interface LeaderboardEntry {
+  rank: number;
+  user_id: number;
+  user_name: string;
+  user_avatar: string | null;
+  account_name: string;
+  initial_balance: number;
+  total_value: number;
+  total_pnl: number;
+  return_pct: number;
+  trade_count: number;
+  position_count: number;
+}
+
+export interface LeaderboardResponse {
+  entries: LeaderboardEntry[];
+  current_user_id: number | null;
+  updated_at: string;
+}
+
+export async function fetchLeaderboard(): Promise<LeaderboardResponse> {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (_accessToken) {
+    headers["Authorization"] = `Bearer ${_accessToken}`;
+  }
+  const res = await fetch(`${BACKEND_URL}/api/paper/leaderboard`, {
+    headers,
+    credentials: "include",
+  });
+  if (!res.ok) throw new Error(`API Error: ${res.status}`);
+  return res.json();
 }
 
 // --- Live Prices API ---

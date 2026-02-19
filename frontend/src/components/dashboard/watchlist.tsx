@@ -5,12 +5,7 @@ import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getWatchlist, getWatchlistSync, removeFromWatchlist, type WatchlistItem } from "@/lib/watchlist";
 import { useAuth } from "@/lib/auth-context";
-
-function formatPrice(price: number | null | undefined): string {
-  if (price == null || price === 0) return "-";
-  if (price >= 1000) return price.toLocaleString(undefined, { maximumFractionDigits: 0 });
-  return price.toLocaleString(undefined, { maximumFractionDigits: 2 });
-}
+import { formatPrice } from "@/lib/format";
 
 const gradeColor: Record<string, string> = {
   "A+": "#4ade80",
@@ -122,7 +117,7 @@ export function Watchlist() {
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2 text-xs">
                 <div>
                   <span className="text-[var(--muted)]">현재가</span>
-                  <p className="font-medium mt-0.5">{formatPrice(item.current_price)}</p>
+                  <p className="font-medium mt-0.5">{formatPrice(item.current_price, item.market)}</p>
                 </div>
                 <div>
                   <span className="text-[var(--muted)]">신뢰도</span>
@@ -133,13 +128,13 @@ export function Watchlist() {
                     {item.action === "SELL" ? "재매수 검토가" : "매수 추천가"}
                   </span>
                   <p className="font-medium mt-0.5" style={{ color: "#60a5fa" }}>
-                    {formatPrice(item.entry_price)}
+                    {formatPrice(item.entry_price, item.market)}
                   </p>
                 </div>
                 <div>
                   <span className="text-[var(--muted)]">목표가</span>
                   <p className="font-medium mt-0.5" style={{ color: "#4ade80" }}>
-                    {formatPrice(item.target_price)}
+                    {formatPrice(item.target_price, item.market)}
                   </p>
                 </div>
                 <div>
@@ -158,7 +153,7 @@ export function Watchlist() {
                 <div>
                   <span className="text-[var(--muted)]">손절가</span>
                   <p className="font-medium mt-0.5" style={{ color: "#f87171" }}>
-                    {formatPrice(item.stop_loss)}
+                    {formatPrice(item.stop_loss, item.market)}
                   </p>
                 </div>
                 <div>

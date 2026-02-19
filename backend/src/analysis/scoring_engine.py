@@ -550,7 +550,7 @@ class ScoringEngine:
                 adjustments.append({"factor": f"목표가 상방 ({upside * 100:.0f}%)", "value": -penalty})
 
         # --- Analyst recommendation ---
-        rec = f.get("recommendationKey", "").lower()
+        rec = (f.get("recommendationKey") or "").lower()
         if rec:
             buy_recs = ("strong_buy", "buy")
             sell_recs = ("strong_sell", "sell", "underperform")

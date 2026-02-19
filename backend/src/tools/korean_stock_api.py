@@ -70,6 +70,9 @@ class KoreanStockAPITool(BaseTool):
         resp.raise_for_status()
         data = resp.json()
         self._access_token = data["access_token"]
+        # KIS 토큰은 약 24시간 유효 — 안전하게 23시간 후 갱신
+        from datetime import timedelta
+        self._token_expires = datetime.now() + timedelta(hours=23)
 
     def _get_headers(self) -> dict:
         return {
@@ -120,6 +123,9 @@ class KoreanStockAPITool(BaseTool):
                 "close": float(item.get("stck_clpr", 0)),
                 "volume": int(item.get("acml_vol", 0)),
             })
+        # KIS API returns data in reverse chronological order (newest first).
+        # Sort ascending by date so that iloc[-1] is the most recent.
+        ohlcv.sort(key=lambda x: x["date"])
         return ohlcv
 
     def _get_stock_info(self, ticker: str) -> dict:

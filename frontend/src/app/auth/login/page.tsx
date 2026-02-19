@@ -26,7 +26,7 @@ export default function LoginPage() {
     <div className="flex items-center justify-center h-full">
       <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-8 w-full max-w-sm space-y-6">
         <div className="text-center">
-          <h1 className="text-2xl font-bold">AutoStock</h1>
+          <h1 className="text-2xl font-bold">TradeRadar</h1>
           <p className="text-sm text-[var(--muted)] mt-1">로그인하여 워치리스트를 동기화하세요</p>
         </div>
 

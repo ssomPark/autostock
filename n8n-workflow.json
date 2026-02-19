@@ -1,10 +1,10 @@
 {
-  "name": "AutoStock Pipeline",
+  "name": "TradeRadar Pipeline",
   "nodes": [
     {
       "parameters": {
         "httpMethod": "POST",
-        "path": "autostock-pipeline",
+        "path": "traderadar-pipeline",
         "responseMode": "onReceived",
         "responseData": "allEntries",
         "options": {}
@@ -14,7 +14,7 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [0, 300],
-      "webhookId": "autostock-pipeline"
+      "webhookId": "traderadar-pipeline"
     },
 
     {
@@ -588,7 +588,7 @@
   },
   "staticData": null,
   "tags": [
-    { "name": "AutoStock" },
+    { "name": "TradeRadar" },
     { "name": "Pipeline" }
   ],
   "triggerCount": 1,

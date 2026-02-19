@@ -5,7 +5,7 @@ import { QueryProvider } from "@/lib/query-provider";
 import { AuthProvider } from "@/lib/auth-context";
 
 export const metadata: Metadata = {
-  title: "AutoStock - AI Stock Analysis",
+  title: "TradeRadar - AI Stock Analysis",
   description: "Multi-Agent Stock Analysis System",
 };
 

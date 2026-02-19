@@ -1,24 +1,24 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: autostock-postgres
+    container_name: traderadar-postgres
     environment:
-      POSTGRES_USER: autostock
-      POSTGRES_PASSWORD: autostock
-      POSTGRES_DB: autostock
+      POSTGRES_USER: traderadar
+      POSTGRES_PASSWORD: traderadar
+      POSTGRES_DB: traderadar
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U autostock"]
+      test: ["CMD-SHELL", "pg_isready -U traderadar"]
       interval: 5s
       timeout: 5s
       retries: 5
 
   redis:
     image: redis:7-alpine
-    container_name: autostock-redis
+    container_name: traderadar-redis
     ports:
       - "6379:6379"
     volumes:
@@ -33,13 +33,14 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: autostock-backend
+    container_name: traderadar-backend
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://autostock:autostock@postgres:5432/autostock
-      DATABASE_URL_SYNC: postgresql://autostock:autostock@postgres:5432/autostock
+      DATABASE_URL: postgresql+asyncpg://traderadar:traderadar@postgres:5432/traderadar
+      DATABASE_URL_SYNC: postgresql://traderadar:traderadar@postgres:5432/traderadar
       REDIS_URL: redis://redis:6379/0
+      FRONTEND_URL: https://traderadar.duckdns.org
     env_file:
       - ./backend/.env
     depends_on:
@@ -52,6 +53,24 @@ services:
     networks:
       - default
       - n8n_network
+      - proxy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_BACKEND_URL: ""
+        BACKEND_INTERNAL_URL: "http://traderadar-backend:8000"
+    container_name: traderadar-frontend
+    ports:
+      - "3200:3000"
+    environment:
+      HOSTNAME: "0.0.0.0"
+    networks:
+      - default
+      - proxy
     restart: unless-stopped
 
 volumes:
@@ -63,3 +82,6 @@ networks:
   n8n_network:
     external: true
     name: n8n_live_n8n_live_network
+  proxy:
+    external: true
+    name: proxy

@@ -19,14 +19,14 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
-    logger.info("Starting AutoStock API server...")
+    logger.info("Starting TradeRadar API server...")
     try:
         await init_db()
         logger.info("Database connected successfully")
     except Exception as e:
         logger.warning(f"Database not available (running without DB): {e}")
     yield
-    logger.info("Shutting down AutoStock API server...")
+    logger.info("Shutting down TradeRadar API server...")
     try:
         await close_db()
     except Exception:
@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="AutoStock API",
+    title="TradeRadar API",
     description="Multi-Agent Stock Analysis System API",
     version="0.1.0",
     lifespan=lifespan,
@@ -66,4 +66,4 @@ app.include_router(paper_trading.router, prefix="/api/paper", tags=["paper-tradi
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "healthy", "service": "AutoStock API"}
+    return {"status": "healthy", "service": "TradeRadar API"}
