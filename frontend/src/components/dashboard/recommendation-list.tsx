@@ -1,20 +1,36 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueries } from "@tanstack/react-query";
 import Link from "next/link";
-import { fetchDashboardSummary } from "@/lib/api";
+import { fetchDashboardSummary, fetchScore } from "@/lib/api";
 import { useLivePrices } from "@/hooks/use-live-prices";
-
-function formatPrice(price: number | null | undefined): string {
-  if (price == null || price === 0) return "-";
-  if (price >= 1000) return price.toLocaleString(undefined, { maximumFractionDigits: 0 });
-  return price.toLocaleString(undefined, { maximumFractionDigits: 2 });
-}
+import { formatPrice } from "@/lib/format";
 
 export function RecommendationList() {
   const { data, isLoading } = useQuery({
     queryKey: ["dashboard"],
     queryFn: fetchDashboardSummary,
+  });
+
+  const topRecs: any[] = data?.data?.top_recommendations ?? [];
+  const uniqueTopTickers = Array.from(
+    new Map(topRecs.map((r: any) => [`${r.ticker}:${r.market}`, r])).values()
+  );
+  const liveScoreResults = useQueries({
+    queries: uniqueTopTickers.map((rec: any) => ({
+      queryKey: ["score", rec.ticker, rec.market],
+      queryFn: () => fetchScore(rec.ticker, rec.market),
+      staleTime: 5 * 60 * 1000,
+      retry: 1,
+    })),
+  });
+  const liveScoreMap = new Map<string, { confidence?: number; loading: boolean }>();
+  uniqueTopTickers.forEach((rec: any, idx: number) => {
+    const q = liveScoreResults[idx];
+    liveScoreMap.set(`${rec.ticker}:${rec.market}`, {
+      confidence: q?.data?.data?.confidence?.final,
+      loading: q?.isLoading ?? false,
+    });
   });
 
   const { prices, marketStatus, isAnyMarketOpen } = useLivePrices();
@@ -49,7 +65,7 @@ export function RecommendationList() {
             추천 데이터가 없습니다. 파이프라인을 실행해주세요.
           </p>
         )}
-        {data?.data?.top_recommendations?.map((rec: any, i: number) => {
+        {topRecs.map((rec: any, i: number) => {
           const actionColor = rec.action === "BUY" ? "#4ade80" : rec.action === "SELL" ? "#f87171" : "#facc15";
           const actionBg = rec.action === "BUY" ? "rgba(34,197,94,0.2)" : rec.action === "SELL" ? "rgba(239,68,68,0.2)" : "rgba(234,179,8,0.2)";
           const actionLabel = rec.action === "BUY" ? "매수" : rec.action === "SELL" ? "매도" : "관망";
@@ -79,7 +95,7 @@ export function RecommendationList() {
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 text-xs">
                 <div>
                   <span className="text-[var(--muted)]">{lp ? "실시간가" : "현재가"}</span>
-                  <p className="font-medium mt-0.5">{formatPrice(displayPrice)}</p>
+                  <p className="font-medium mt-0.5">{formatPrice(displayPrice, rec.market)}</p>
                 </div>
                 <div>
                   <span className="text-[var(--muted)]">{lp ? "추천대비" : "기대수익"}</span>
@@ -96,15 +112,53 @@ export function RecommendationList() {
                 </div>
                 <div>
                   <span className="text-[var(--muted)]">신뢰도</span>
-                  <p className="font-medium mt-0.5">{rec.confidence != null ? `${(rec.confidence * 100).toFixed(0)}%` : "-"}</p>
+                  <p className="font-medium mt-0.5">
+                    {(() => {
+                      const liveEntry = liveScoreMap.get(`${rec.ticker}:${rec.market}`);
+                      const liveConf = liveEntry?.confidence;
+                      const scoreLoading = liveEntry?.loading ?? false;
+                      const dbPct = rec.confidence != null ? rec.confidence * 100 : null;
+
+                      if (scoreLoading) {
+                        return (
+                          <span className="inline-flex items-center gap-1">
+                            <span>{dbPct != null ? `${dbPct.toFixed(0)}%` : "-"}</span>
+                            <svg className="w-3 h-3 animate-spin text-[var(--muted)]" viewBox="0 0 24 24" fill="none">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                            </svg>
+                          </span>
+                        );
+                      }
+
+                      if (liveConf != null && dbPct != null) {
+                        const diff = liveConf - dbPct;
+                        if (Math.abs(diff) >= 1) {
+                          const diffColor = diff > 0 ? "#4ade80" : "#f87171";
+                          const arrow = diff > 0 ? "▲" : "▼";
+                          return (
+                            <>
+                              <span>{liveConf.toFixed(0)}%</span>
+                              <span className="text-[10px] ml-1" style={{ color: diffColor }}>
+                                {arrow}{Math.abs(diff).toFixed(0)}p
+                              </span>
+                            </>
+                          );
+                        }
+                        return <span>{liveConf.toFixed(0)}%</span>;
+                      }
+
+                      return dbPct != null ? `${dbPct.toFixed(0)}%` : "-";
+                    })()}
+                  </p>
                 </div>
                 <div>
                   <span className="text-[var(--muted)]">목표가</span>
-                  <p className="font-medium mt-0.5" style={{ color: "#4ade80" }}>{formatPrice(rec.target_price)}</p>
+                  <p className="font-medium mt-0.5" style={{ color: "#4ade80" }}>{formatPrice(rec.target_price, rec.market)}</p>
                 </div>
                 <div>
                   <span className="text-[var(--muted)]">손절가</span>
-                  <p className="font-medium mt-0.5" style={{ color: "#f87171" }}>{formatPrice(rec.stop_loss)}</p>
+                  <p className="font-medium mt-0.5" style={{ color: "#f87171" }}>{formatPrice(rec.stop_loss, rec.market)}</p>
                 </div>
               </div>
             </Link>

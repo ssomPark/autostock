@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueries } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { fetchRecommendations, fetchScore, fetchFinancials, saveAnalysisAPI, fetchPaperAccounts, createPaperAccount } from "@/lib/api";
@@ -9,6 +9,7 @@ import { useAuth } from "@/lib/auth-context";
 import { SparklineChart } from "@/components/charts/sparkline-chart";
 import { useLivePrices } from "@/hooks/use-live-prices";
 import { OrderModal } from "@/components/paper-trading/order-modal";
+import { formatPrice } from "@/lib/format";
 
 function MarketStatusDot({ isOpen, label, holiday }: { isOpen: boolean; label: string; holiday?: boolean }) {
   const statusText = holiday ? "휴장" : isOpen ? "개장" : "마감";
@@ -36,6 +37,50 @@ function formatPct(value: number | null | undefined): React.ReactNode {
   );
 }
 
+function ConfidenceCell({ dbConfidence, liveConfidence, isLoading }: {
+  dbConfidence: number;
+  liveConfidence?: number;
+  isLoading: boolean;
+}) {
+  const dbPct = dbConfidence * 100;
+
+  if (isLoading) {
+    return (
+      <span className="inline-flex items-center gap-1">
+        <span>{dbPct.toFixed(0)}%</span>
+        <svg className="w-3 h-3 animate-spin text-[var(--muted)]" viewBox="0 0 24 24" fill="none">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+        </svg>
+      </span>
+    );
+  }
+
+  if (liveConfidence == null) {
+    return <span>{dbPct.toFixed(0)}%</span>;
+  }
+
+  const diff = liveConfidence - dbPct;
+  const changed = Math.abs(diff) >= 1;
+
+  if (!changed) {
+    return <span>{liveConfidence.toFixed(0)}%</span>;
+  }
+
+  const diffColor = diff > 0 ? "#4ade80" : "#f87171";
+  const arrow = diff > 0 ? "▲" : "▼";
+
+  return (
+    <div className="leading-tight">
+      <span className="font-medium">{liveConfidence.toFixed(0)}%</span>
+      <div className="flex items-center gap-0.5 text-[10px]">
+        <span style={{ color: diffColor }}>{arrow}{Math.abs(diff).toFixed(0)}p</span>
+        <span className="text-[var(--muted)]">({dbPct.toFixed(0)}%)</span>
+      </div>
+    </div>
+  );
+}
+
 export default function RecommendationsPage() {
   const router = useRouter();
   const { isAuthenticated } = useAuth();
@@ -49,6 +94,7 @@ export default function RecommendationsPage() {
   // Paper trading state
   const [orderTarget, setOrderTarget] = useState<any>(null);
   const [paperAccountId, setPaperAccountId] = useState<number | null>(null);
+  const [paperCashBalance, setPaperCashBalance] = useState<number | undefined>(undefined);
   const [buySuccess, setBuySuccess] = useState<string | null>(null);
 
   const handlePaperBuy = async (rec: any, e: React.MouseEvent) => {
@@ -64,9 +110,11 @@ export default function RecommendationsPage() {
         const accounts = await fetchPaperAccounts();
         if (accounts.length > 0) {
           accId = accounts[0].id;
+          setPaperCashBalance(accounts[0].cash_balance);
         } else {
           const newAcc = await createPaperAccount({ name: "기본 계좌" });
           accId = newAcc.id;
+          setPaperCashBalance(newAcc.cash_balance ?? 100_000_000);
         }
         setPaperAccountId(accId);
       }
@@ -127,6 +175,28 @@ export default function RecommendationsPage() {
   const { data, isLoading } = useQuery({
     queryKey: ["recommendations", market, action],
     queryFn: () => fetchRecommendations({ market, action }),
+  });
+
+  // 각 종목의 실시간 ScoringEngine 신뢰도를 병렬 조회 (중복 ticker 제거)
+  const recs: any[] = data?.data ?? [];
+  const uniqueTickers = Array.from(
+    new Map(recs.map((r: any) => [`${r.ticker}:${r.market}`, r])).values()
+  );
+  const liveScoreResults = useQueries({
+    queries: uniqueTickers.map((rec: any) => ({
+      queryKey: ["score", rec.ticker, rec.market],
+      queryFn: () => fetchScore(rec.ticker, rec.market),
+      staleTime: 5 * 60 * 1000,
+      retry: 1,
+    })),
+  });
+  const liveScoreMap = new Map<string, { confidence?: number; loading: boolean }>();
+  uniqueTickers.forEach((rec: any, idx: number) => {
+    const q = liveScoreResults[idx];
+    liveScoreMap.set(`${rec.ticker}:${rec.market}`, {
+      confidence: q?.data?.data?.confidence?.final,
+      loading: q?.isLoading ?? false,
+    });
   });
 
   const { prices, marketStatus, isAnyMarketOpen } = useLivePrices({ market });
@@ -237,16 +307,22 @@ export default function RecommendationsPage() {
                   <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
                     <div className="flex justify-between">
                       <span className="text-[var(--muted)]">추천가</span>
-                      <span className="font-medium">{rec.current_price?.toLocaleString()}</span>
+                      <span className="font-medium">{formatPrice(rec.current_price, rec.market)}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-[var(--muted)]">신뢰도</span>
-                      <span className="font-medium">{(rec.confidence * 100).toFixed(0)}%</span>
+                      <span className="font-medium">
+                        <ConfidenceCell
+                          dbConfidence={rec.confidence}
+                          liveConfidence={liveScoreMap.get(`${rec.ticker}:${rec.market}`)?.confidence}
+                          isLoading={liveScoreMap.get(`${rec.ticker}:${rec.market}`)?.loading ?? false}
+                        />
+                      </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-[var(--muted)]">실시간가</span>
                       <span className="font-medium">
-                        {lp ? lp.live_price.toLocaleString() : "-"}
+                        {lp ? formatPrice(lp.live_price, rec.market) : "-"}
                       </span>
                     </div>
                     <div className="flex justify-between">
@@ -257,7 +333,7 @@ export default function RecommendationsPage() {
                     </div>
                     <div className="flex justify-between">
                       <span className="text-[var(--muted)]">목표가</span>
-                      <span className="font-medium" style={{ color: "#4ade80" }}>{rec.target_price?.toLocaleString() ?? "-"}</span>
+                      <span className="font-medium" style={{ color: "#4ade80" }}>{formatPrice(rec.target_price, rec.market)}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-[var(--muted)]">기대수익</span>
@@ -271,7 +347,7 @@ export default function RecommendationsPage() {
                     </div>
                     <div className="flex justify-between">
                       <span className="text-[var(--muted)]">손절가</span>
-                      <span className="font-medium" style={{ color: "#f87171" }}>{rec.stop_loss?.toLocaleString() ?? "-"}</span>
+                      <span className="font-medium" style={{ color: "#f87171" }}>{formatPrice(rec.stop_loss, rec.market)}</span>
                     </div>
                   </div>
                   {rec.reasoning && (
@@ -364,9 +440,9 @@ export default function RecommendationsPage() {
                             <SparklineChart ticker={rec.ticker} market={rec.market} width={120} height={48} />
                           </Link>
                         </td>
-                        <td className="p-4">{rec.current_price?.toLocaleString()}</td>
+                        <td className="p-4">{formatPrice(rec.current_price, rec.market)}</td>
                         <td className="p-4">
-                          {lp ? lp.live_price.toLocaleString() : "-"}
+                          {lp ? formatPrice(lp.live_price, rec.market) : "-"}
                         </td>
                         <td className="p-4">
                           {lp ? formatPct(lp.change_from_rec) : "-"}
@@ -382,8 +458,14 @@ export default function RecommendationsPage() {
                             {rec.action === "BUY" ? "매수" : rec.action === "SELL" ? "매도" : "관망"}
                           </span>
                         </td>
-                        <td className="p-4">{(rec.confidence * 100).toFixed(0)}%</td>
-                        <td className="p-4" style={{ color: "#4ade80" }}>{rec.target_price?.toLocaleString() ?? "-"}</td>
+                        <td className="p-4">
+                          <ConfidenceCell
+                            dbConfidence={rec.confidence}
+                            liveConfidence={liveScoreMap.get(`${rec.ticker}:${rec.market}`)?.confidence}
+                            isLoading={liveScoreMap.get(`${rec.ticker}:${rec.market}`)?.loading ?? false}
+                          />
+                        </td>
+                        <td className="p-4" style={{ color: "#4ade80" }}>{formatPrice(rec.target_price, rec.market)}</td>
                         <td className="p-4">
                           {rec.current_price > 0 && rec.target_price ? (() => {
                             const pct = ((rec.target_price - rec.current_price) / rec.current_price * 100);
@@ -391,7 +473,7 @@ export default function RecommendationsPage() {
                             return <span style={{ color, fontWeight: 500 }}>{pct >= 0 ? "+" : ""}{pct.toFixed(1)}%</span>;
                           })() : "-"}
                         </td>
-                        <td className="p-4" style={{ color: "#f87171" }}>{rec.stop_loss?.toLocaleString() ?? "-"}</td>
+                        <td className="p-4" style={{ color: "#f87171" }}>{formatPrice(rec.stop_loss, rec.market)}</td>
                         <td className="p-4">
                           <div className="flex items-center gap-1">
                             {rec.action === "BUY" && (
@@ -478,6 +560,7 @@ export default function RecommendationsPage() {
           name={orderTarget.name}
           market={orderTarget.market}
           price={orderTarget.current_price}
+          cashBalance={paperCashBalance}
           source="recommendation"
           recommendationId={orderTarget.id}
           recommendationAction={orderTarget.action}
