@@ -89,7 +89,7 @@ function formatKRW(value: number) {
 }
 
 function formatPrice(value: number, market: string) {
-  const isUS = ["NYSE", "NASDAQ"].includes(market);
+  const isUS = ["NYSE", "NASDAQ", "AMEX"].includes(market) || market.startsWith("Nasdaq");
   if (isUS) return `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   return `${formatKRW(value)}원`;
 }
@@ -126,7 +126,7 @@ function SellModal({
   const [error, setError] = useState<string | null>(null);
   const [sellRate, setSellRate] = useState<number | null>(position.exchange_rate ?? null);
 
-  const isUS = ["NYSE", "NASDAQ"].includes(position.market);
+  const isUS = ["NYSE", "NASDAQ", "AMEX"].includes(position.market) || position.market.startsWith("Nasdaq");
 
   useEffect(() => {
     if (isUS) {

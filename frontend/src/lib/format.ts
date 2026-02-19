@@ -5,7 +5,7 @@
  */
 export function formatPrice(price: number | null | undefined, market?: string): string {
   if (price == null || price === 0) return "-";
-  const isUS = market ? ["NYSE", "NASDAQ"].includes(market) : false;
+  const isUS = market ? ["NYSE", "NASDAQ", "AMEX"].includes(market) || market.startsWith("Nasdaq") : false;
   if (isUS) {
     return `$${price.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   }

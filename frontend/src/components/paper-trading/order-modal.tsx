@@ -41,7 +41,7 @@ export function OrderModal({
   const [error, setError] = useState<string | null>(null);
   const [exchangeRate, setExchangeRate] = useState<number | null>(null);
 
-  const isUS = ["NYSE", "NASDAQ"].includes(market);
+  const isUS = ["NYSE", "NASDAQ", "AMEX"].includes(market) || market.startsWith("Nasdaq");
 
   useEffect(() => {
     if (isUS && isOpen) {
