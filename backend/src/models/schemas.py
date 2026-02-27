@@ -212,6 +212,86 @@ class APIResponse(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now)
 
 
+# --- Event Calendar ---
+
+class EventCategory(str, Enum):
+    POLICY = "policy"
+    EARNINGS = "earnings"
+    PRODUCT = "product"
+    CONFERENCE = "conference"
+    IPO = "ipo"
+    DIVIDEND = "dividend"
+    GLOBAL = "global"
+
+
+class ImpactLevel(str, Enum):
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
+class ExpectedImpact(str, Enum):
+    POSITIVE = "positive"
+    NEGATIVE = "negative"
+    NEUTRAL = "neutral"
+
+
+class RelationType(str, Enum):
+    DIRECT = "direct"
+    INDIRECT = "indirect"
+    SECTOR = "sector"
+
+
+class EventStockCreate(BaseModel):
+    ticker: str
+    name: str
+    market: str
+    relation_type: RelationType = RelationType.DIRECT
+    expected_impact: ExpectedImpact = ExpectedImpact.POSITIVE
+    reasoning: str = ""
+
+
+class EventStockResponse(EventStockCreate):
+    id: int
+    event_id: int
+    created_at: datetime
+
+
+class EventCreate(BaseModel):
+    title: str
+    description: str = ""
+    event_date: datetime
+    category: EventCategory
+    impact_level: ImpactLevel = ImpactLevel.MEDIUM
+    source_url: Optional[str] = None
+    stocks: list[EventStockCreate] = Field(default_factory=list)
+
+
+class EventUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    event_date: Optional[datetime] = None
+    category: Optional[EventCategory] = None
+    impact_level: Optional[ImpactLevel] = None
+    source_url: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class EventResponse(BaseModel):
+    id: int
+    title: str
+    description: str
+    event_date: datetime
+    category: str
+    impact_level: str
+    source_url: Optional[str]
+    is_active: bool
+    created_at: datetime
+    updated_at: datetime
+    stocks: list[EventStockResponse] = Field(default_factory=list)
+    days_until: Optional[int] = None
+
+
 class DashboardSummary(BaseModel):
     total_recommendations: int = 0
     buy_count: int = 0

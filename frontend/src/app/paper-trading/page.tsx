@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import Link from "next/link";
-import { useLivePrices } from "@/hooks/use-live-prices";
 import {
   fetchPaperAccounts,
   createPaperAccount,
@@ -18,8 +17,10 @@ import {
   fetchRecommendations,
   fetchExchangeRate,
   fetchLeaderboard,
+  fetchMarketStatus,
+  searchStocks,
 } from "@/lib/api";
-import type { LeaderboardEntry, LeaderboardResponse } from "@/lib/api";
+import type { LeaderboardEntry, LeaderboardResponse, StockSearchResult } from "@/lib/api";
 import { useQuery } from "@tanstack/react-query";
 import { OrderModal } from "@/components/paper-trading/order-modal";
 
@@ -441,16 +442,99 @@ function LeaderboardView() {
 
 // --- Manual Buy Form ---
 function ManualBuyForm({ accountId, onSuccess }: { accountId: number; onSuccess: () => void }) {
+  const [input, setInput] = useState("");
   const [ticker, setTicker] = useState("");
-  const [market, setMarket] = useState("KOSPI");
+  const [market, setMarket] = useState("");
+  const [name, setName] = useState("");
   const [quantity, setQuantity] = useState(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
+  // Autocomplete state
+  const [suggestions, setSuggestions] = useState<StockSearchResult[]>([]);
+  const [showDropdown, setShowDropdown] = useState(false);
+  const [highlightIdx, setHighlightIdx] = useState(-1);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  const handleInputChange = useCallback((value: string) => {
+    setInput(value);
+    setHighlightIdx(-1);
+    // Clear selection when user edits
+    if (ticker) {
+      setTicker("");
+      setMarket("");
+      setName("");
+    }
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (value.trim().length < 2) {
+      setSuggestions([]);
+      setShowDropdown(false);
+      return;
+    }
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const data = await searchStocks(value.trim());
+        setSuggestions(data.results || []);
+        setShowDropdown((data.results || []).length > 0);
+      } catch {
+        setSuggestions([]);
+        setShowDropdown(false);
+      }
+    }, 300);
+  }, [ticker]);
+
+  const selectSuggestion = useCallback((item: StockSearchResult) => {
+    setInput(`${item.name} (${item.ticker})`);
+    setTicker(item.ticker);
+    setMarket(item.market);
+    setName(item.name);
+    setShowDropdown(false);
+    setSuggestions([]);
+  }, []);
+
+  const clearSelection = () => {
+    setInput("");
+    setTicker("");
+    setMarket("");
+    setName("");
+    setSuggestions([]);
+    setShowDropdown(false);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (!showDropdown || suggestions.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlightIdx((prev) => (prev < suggestions.length - 1 ? prev + 1 : 0));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlightIdx((prev) => (prev > 0 ? prev - 1 : suggestions.length - 1));
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (highlightIdx >= 0 && highlightIdx < suggestions.length) {
+        selectSuggestion(suggestions[highlightIdx]);
+      }
+    } else if (e.key === "Escape") {
+      setShowDropdown(false);
+    }
+  };
+
   const handleBuy = async () => {
-    if (!ticker.trim()) {
-      setError("종목코드를 입력하세요.");
+    if (!ticker) {
+      setError("종목을 검색하여 선택하세요.");
       return;
     }
     setLoading(true);
@@ -459,15 +543,15 @@ function ManualBuyForm({ accountId, onSuccess }: { accountId: number; onSuccess:
       await executePaperBuy({
         account_id: accountId,
         ticker: ticker.trim().toUpperCase(),
-        name: ticker.trim().toUpperCase(),
+        name: name || ticker.trim().toUpperCase(),
         market,
         quantity,
-        price: 0, // price=0 means we need to fetch it
+        price: 0,
         source: "manual",
       });
       setSuccess(true);
       setTimeout(() => setSuccess(false), 2000);
-      setTicker("");
+      clearSelection();
       setQuantity(1);
       onSuccess();
     } catch (err: any) {
@@ -479,29 +563,58 @@ function ManualBuyForm({ accountId, onSuccess }: { accountId: number; onSuccess:
     }
   };
 
+  const isSelected = !!ticker;
+
   return (
     <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4">
       <h3 className="font-medium mb-3">수동 매수</h3>
       <div className="flex flex-col sm:flex-row gap-3">
-        <div className="flex-1">
+        <div className="relative flex-1" ref={dropdownRef}>
           <input
             type="text"
-            placeholder="종목코드 (예: 005930, AAPL)"
-            value={ticker}
-            onChange={(e) => setTicker(e.target.value)}
-            className="w-full h-10 rounded-lg bg-white/5 border border-[var(--card-border)] px-3 text-sm focus:outline-none focus:border-blue-500"
+            placeholder="종목명 또는 코드 검색 (예: 삼성전자, AAPL)"
+            value={input}
+            onChange={(e) => handleInputChange(e.target.value)}
+            onKeyDown={handleKeyDown}
+            onFocus={() => suggestions.length > 0 && setShowDropdown(true)}
+            className={`w-full h-10 rounded-lg bg-white/5 border px-3 text-sm focus:outline-none focus:border-blue-500 ${
+              isSelected ? "border-green-500/50" : "border-[var(--card-border)]"
+            }`}
           />
+          {isSelected && (
+            <button
+              onClick={clearSelection}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--muted)] hover:text-[var(--foreground)] transition-colors"
+              title="선택 초기화"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          )}
+          {showDropdown && suggestions.length > 0 && (
+            <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-[var(--card)] border border-[var(--card-border)] rounded-lg shadow-lg overflow-hidden max-h-60 overflow-y-auto">
+              {suggestions.map((item, idx) => (
+                <button
+                  key={`${item.ticker}-${idx}`}
+                  onMouseDown={(e) => { e.preventDefault(); selectSuggestion(item); }}
+                  className={`w-full px-3 py-2 flex items-center justify-between text-left text-sm transition-colors ${
+                    idx === highlightIdx ? "bg-blue-600/20" : "hover:bg-[var(--background)]"
+                  }`}
+                >
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="font-medium truncate">{item.name}</span>
+                    <span className="text-xs text-[var(--muted)] shrink-0">{item.ticker}</span>
+                  </div>
+                  <span className="text-xs text-[var(--muted)] ml-2 shrink-0">{item.market}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
-        <select
-          value={market}
-          onChange={(e) => setMarket(e.target.value)}
-          className="h-10 rounded-lg bg-white/5 border border-[var(--card-border)] px-3 text-sm focus:outline-none focus:border-blue-500"
-        >
-          <option value="KOSPI">KOSPI</option>
-          <option value="KOSDAQ">KOSDAQ</option>
-          <option value="NYSE">NYSE</option>
-          <option value="NASDAQ">NASDAQ</option>
-        </select>
+        {isSelected && (
+          <div className="flex items-center h-10 px-3 rounded-lg bg-green-500/10 border border-green-500/30 text-xs text-green-400 whitespace-nowrap">
+            {market}
+          </div>
+        )}
         <div className="flex items-center gap-2">
           <input
             type="number"
@@ -520,7 +633,7 @@ function ManualBuyForm({ accountId, onSuccess }: { accountId: number; onSuccess:
         </div>
         <button
           onClick={handleBuy}
-          disabled={loading}
+          disabled={loading || !isSelected}
           className="h-10 px-4 rounded-lg bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-sm font-medium transition-colors whitespace-nowrap"
         >
           {loading ? "..." : success ? "완료!" : "매수"}
@@ -746,8 +859,18 @@ export default function PaperTradingPage() {
   // Tab
   const [activeTab, setActiveTab] = useState<"portfolio" | "ranking">("portfolio");
 
-  // Live market status for auto-refresh
-  const { marketStatus, isAnyMarketOpen } = useLivePrices({ enabled: isAuthenticated });
+  // Market status for auto-refresh (direct query, no batch price overhead)
+  const { data: marketStatusData } = useQuery({
+    queryKey: ["market-status"],
+    queryFn: fetchMarketStatus,
+    refetchInterval: 60_000,
+    enabled: isAuthenticated,
+  });
+  const marketStatus = marketStatusData?.data ?? null;
+  // Default to true (assume open) so auto-refresh works even if status fetch fails
+  const isAnyMarketOpen = marketStatus
+    ? marketStatus.KR.is_open || marketStatus.US.is_open
+    : true;
 
   const loadData = useCallback(async (accountId: number) => {
     try {
@@ -792,16 +915,36 @@ export default function PaperTradingPage() {
     }
   }, [authLoading, isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-refresh positions/summary every 30s when market is open
+  // Auto-refresh positions/summary: 15s when market open, 5min when closed
+  const REFRESH_OPEN = 15;
+  const REFRESH_CLOSED = 300;
+  const refreshSec = isAnyMarketOpen ? REFRESH_OPEN : REFRESH_CLOSED;
+  const [countdown, setCountdown] = useState(refreshSec);
+  const [refreshing, setRefreshing] = useState(false);
   const activeIdRef = useRef(activeAccountId);
   activeIdRef.current = activeAccountId;
+
   useEffect(() => {
-    if (!isAnyMarketOpen || !activeIdRef.current) return;
-    const id = setInterval(() => {
-      if (activeIdRef.current) loadData(activeIdRef.current);
-    }, 30_000);
-    return () => clearInterval(id);
-  }, [isAnyMarketOpen, loadData]);
+    setCountdown(refreshSec);
+  }, [refreshSec]);
+
+  useEffect(() => {
+    if (!activeAccountId) return;
+    setCountdown(refreshSec);
+    const tick = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          if (activeIdRef.current) {
+            setRefreshing(true);
+            loadData(activeIdRef.current).finally(() => setRefreshing(false));
+          }
+          return refreshSec;
+        }
+        return prev - 1;
+      });
+    }, 1_000);
+    return () => clearInterval(tick);
+  }, [activeAccountId, refreshSec, loadData]);
 
   const handleCreateAccount = async () => {
     setCreating(true);
@@ -844,7 +987,11 @@ export default function PaperTradingPage() {
   };
 
   const handleRefresh = () => {
-    if (activeAccountId) loadData(activeAccountId);
+    if (activeAccountId) {
+      setRefreshing(true);
+      loadData(activeAccountId).finally(() => setRefreshing(false));
+      setCountdown(refreshSec);
+    }
   };
 
   // Auth check
@@ -1007,10 +1154,24 @@ export default function PaperTradingPage() {
           )}
           <button
             onClick={handleRefresh}
-            className="h-9 px-3 rounded-lg bg-[var(--card)] border border-[var(--card-border)] text-sm hover:bg-white/10 transition-colors"
-            title="새로고침"
+            className="relative h-9 w-9 rounded-lg bg-[var(--card)] border border-[var(--card-border)] text-sm hover:bg-white/10 transition-colors flex items-center justify-center"
+            title={`새로고침 (${countdown}초 후 자동 갱신)`}
           >
-            ↻
+            <svg className="absolute inset-0 w-full h-full -rotate-90" viewBox="0 0 36 36">
+              <circle cx="18" cy="18" r="15" fill="none" stroke="currentColor" strokeWidth="1.5" opacity={0.1} />
+              <circle
+                cx="18" cy="18" r="15" fill="none"
+                stroke={isAnyMarketOpen ? "#4ade80" : "#6b7280"}
+                strokeWidth="1.5"
+                strokeDasharray={`${(2 * Math.PI * 15)}`}
+                strokeDashoffset={`${(2 * Math.PI * 15) * (1 - countdown / refreshSec)}`}
+                strokeLinecap="round"
+                className="transition-[stroke-dashoffset] duration-1000 ease-linear"
+              />
+            </svg>
+            <span className={`relative text-xs ${refreshing ? "animate-spin" : ""}`}>
+              {refreshing ? "↻" : countdown}
+            </span>
           </button>
           <button
             onClick={() => setShowCreate(true)}

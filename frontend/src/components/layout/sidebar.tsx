@@ -10,6 +10,7 @@ const navItems = [
   { href: "/search", label: "종목 분석", icon: "🔍" },
   { href: "/my-analyses", label: "분석 기록", icon: "📋", authOnly: true },
   { href: "/recommendations", label: "투자 추천", icon: "💡" },
+  { href: "/events", label: "이벤트 캘린더", icon: "📅" },
   { href: "/paper-trading", label: "모의 투자", icon: "💰", authOnly: true },
   { href: "/news", label: "뉴스", icon: "📰" },
   { href: "/pipeline", label: "파이프라인", icon: "⚙️" },

@@ -61,17 +61,47 @@ class MarketDataService:
             return pd.DataFrame()
 
     def get_current_price(self, ticker: str, market: str = "KOSPI") -> dict:
-        """Get current price info."""
+        """Get current price info. Falls back to yfinance if KIS API fails."""
         if market in ("KOSPI", "KOSDAQ"):
             result = self.kr_api._run(json.dumps({"ticker": ticker, "action": "price"}))
         else:
             result = self.us_api._run(json.dumps({"ticker": ticker, "action": "price"}))
 
         try:
-            return json.loads(result) if isinstance(result, str) else eval(result)
+            data = json.loads(result) if isinstance(result, str) else eval(result)
         except Exception as e:
-            logger.error(f"Failed to get price for {ticker}: {e}")
-            return {"ticker": ticker, "current_price": 0}
+            logger.error(f"Failed to parse price for {ticker}: {e}")
+            data = {"ticker": ticker, "current_price": 0}
+
+        # Fallback to yfinance if primary API returned error or zero price
+        if data.get("error") or not data.get("current_price"):
+            data = self._yfinance_price_fallback(ticker, market, data)
+
+        return data
+
+    def _yfinance_price_fallback(
+        self, ticker: str, market: str, original: dict
+    ) -> dict:
+        """Fetch current price from yfinance as fallback."""
+        suffix = ".KS" if market == "KOSPI" else ".KQ" if market == "KOSDAQ" else ""
+        yf_ticker = f"{ticker}{suffix}"
+        try:
+            info = yf.Ticker(yf_ticker).info
+            price = info.get("regularMarketPrice") or info.get("currentPrice") or 0
+            if price:
+                logger.info(f"yfinance fallback success for {ticker}: {price}")
+                return {
+                    "ticker": ticker,
+                    "current_price": float(price),
+                    "change": float(info.get("regularMarketChange", 0)),
+                    "change_pct": float(info.get("regularMarketChangePercent", 0)),
+                    "volume": int(info.get("regularMarketVolume", 0)),
+                    "high": float(info.get("regularMarketDayHigh", 0)),
+                    "low": float(info.get("regularMarketDayLow", 0)),
+                }
+        except Exception as e:
+            logger.warning(f"yfinance fallback also failed for {ticker}: {e}")
+        return original
 
     def get_stock_info(self, ticker: str, market: str = "KOSPI") -> dict:
         """Get stock info."""

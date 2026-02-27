@@ -73,6 +73,12 @@ News: 20% | Candlestick: 20% | ChartPattern: 25% | S/R: 20% | Volume: 15%
 | `GET /api/recommendations/summary/dashboard` | 대시보드 요약 |
 | `POST /api/n8n/*` | N8N 파이프라인 연동 (start/progress/complete/stock-mapping/market-screener/aggregate/save-recommendations) |
 | `GET /api/pipeline/stream` | SSE 실시간 스트리밍 |
+| `GET /api/events` | 이벤트 목록 (필터: year, month, category, upcoming_days) |
+| `POST /api/events` | 이벤트 생성 (수혜종목 포함) |
+| `PUT /api/events/{id}` | 이벤트 수정 |
+| `DELETE /api/events/{id}` | 이벤트 삭제 |
+| `POST /api/events/{id}/stocks` | 이벤트에 수혜종목 추가 |
+| `DELETE /api/events/{id}/stocks/{stock_id}` | 수혜종목 제거 |
 
 ## Known Pitfalls
 

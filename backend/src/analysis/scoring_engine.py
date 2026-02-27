@@ -25,12 +25,13 @@ class ScoringEngine:
     """Produces a comprehensive score from OHLCV data."""
 
     SIGNAL_WEIGHTS = {
-        "candlestick": 0.15,
-        "chart_pattern": 0.25,
-        "support_resistance": 0.20,
-        "volume": 0.10,
-        "trend": 0.15,
-        "rsi": 0.15,
+        "candlestick": 0.13,
+        "chart_pattern": 0.21,
+        "support_resistance": 0.17,
+        "volume": 0.09,
+        "trend": 0.13,
+        "rsi": 0.12,
+        "fundamental": 0.15,
     }
 
     def __init__(self, df: pd.DataFrame, fundamentals: dict | None = None):
@@ -521,7 +522,118 @@ class ScoringEngine:
         }
 
     # ------------------------------------------------------------------
-    # Fundamental Adjustment
+    # Fundamental Signal (weighted component)
+    # ------------------------------------------------------------------
+
+    def _compute_fundamental_signal(self) -> float:
+        """Convert fundamental data into a -1~+1 signal for weighted scoring.
+
+        Positive = fundamentally attractive (buy signal).
+        Negative = fundamentally weak (sell signal).
+        """
+        if not self.fundamentals:
+            return 0.0
+
+        f = self.fundamentals
+        score = 0.0
+        count = 0
+
+        # PER: lower is more attractive
+        per = f.get("trailingPE")
+        if per is not None and per > 0:
+            if per < 8:
+                score += 0.8
+            elif per < 12:
+                score += 0.5
+            elif per < 15:
+                score += 0.2
+            elif per < 25:
+                score += 0.0
+            elif per < 40:
+                score -= 0.3
+            else:
+                score -= 0.5
+            count += 1
+
+        # PBR: lower is more attractive
+        pbr = f.get("priceToBook")
+        if pbr is not None and pbr > 0:
+            if pbr < 0.7:
+                score += 0.8
+            elif pbr < 1.0:
+                score += 0.4
+            elif pbr < 1.5:
+                score += 0.1
+            elif pbr < 3.0:
+                score -= 0.1
+            else:
+                score -= 0.3
+            count += 1
+
+        # ROE: higher is better
+        roe = f.get("returnOnEquity")
+        if roe is not None:
+            if roe > 0.25:
+                score += 0.7
+            elif roe > 0.15:
+                score += 0.4
+            elif roe > 0.08:
+                score += 0.1
+            elif roe > 0:
+                score += 0.0
+            else:
+                score -= 0.4
+            count += 1
+
+        # Earnings growth
+        eg = f.get("earningsGrowth")
+        if eg is not None:
+            if eg > 0.30:
+                score += 0.6
+            elif eg > 0.10:
+                score += 0.3
+            elif eg > 0.0:
+                score += 0.1
+            elif eg > -0.10:
+                score -= 0.1
+            else:
+                score -= 0.4
+            count += 1
+
+        # Revenue growth
+        rg = f.get("revenueGrowth")
+        if rg is not None:
+            if rg > 0.20:
+                score += 0.5
+            elif rg > 0.05:
+                score += 0.2
+            elif rg > 0:
+                score += 0.05
+            else:
+                score -= 0.2
+            count += 1
+
+        # 52-week discount: further from high = more attractive
+        high_52w = f.get("fiftyTwoWeekHigh")
+        current = f.get("currentPrice") or self.current_price
+        if high_52w and current and high_52w > 0:
+            discount = (high_52w - current) / high_52w
+            if discount >= 0.30:
+                score += 0.6
+            elif discount >= 0.15:
+                score += 0.3
+            elif discount >= 0.05:
+                score += 0.1
+            else:
+                score -= 0.1
+            count += 1
+
+        if count == 0:
+            return 0.0
+        return max(-1.0, min(1.0, score / count))
+
+    # ------------------------------------------------------------------
+    # Fundamental Adjustment (confidence bonus/penalty)
     # ------------------------------------------------------------------
 
     def _fundamental_adjustment(self, signal: str) -> list[dict]:
@@ -856,6 +968,9 @@ class ScoringEngine:
         elif rsi > 70:
             rsi_score = -(rsi - 70) / 30  # -1 ~ 0 (overbought = bearish)
 
+        # 4b. Fundamental signal (-1 ~ +1)
+        fundamental_score = self._compute_fundamental_signal()
+
         # 5. Weighted score
         signals = {
             "candlestick": candlestick.get("strength", 0),
@@ -864,6 +979,7 @@ class ScoringEngine:
             "volume": volume.get("strength", 0),
             "trend": trend_score,
             "rsi": rsi_score,
+            "fundamental": fundamental_score,
         }
 
         total_score = sum(

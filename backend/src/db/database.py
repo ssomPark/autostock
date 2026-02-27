@@ -53,9 +53,22 @@ def get_sync_session() -> Session:
 
 
 async def init_db() -> None:
-    """Create all tables."""
+    """Create all tables and add new columns to existing tables."""
+    from sqlalchemy import text
+
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Add new columns for fundamental screening (idempotent)
+        for stmt in [
+            "ALTER TABLE pipeline_runs ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'news'",
+            "ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'news'",
+            "ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS fundamental_score FLOAT",
+            "ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS fundamental_category VARCHAR(20)",
+        ]:
+            try:
+                await conn.execute(text(stmt))
+            except Exception:
+                pass  # Column already exists or DB not available
 
 
 async def close_db() -> None:

@@ -46,6 +46,24 @@ class DailyScheduler:
             replace_existing=True,
         )
 
+        # Fundamental scan KR: 09:30 KST (after market open, data available)
+        self.scheduler.add_job(
+            self._run_fundamental_kr,
+            CronTrigger(hour=9, minute=30, timezone="Asia/Seoul"),
+            id="fundamental_kr",
+            name="KR Fundamental Screening",
+            replace_existing=True,
+        )
+
+        # Fundamental scan US: 00:00 KST (after US market open, ~10:00 EST)
+        self.scheduler.add_job(
+            self._run_fundamental_us,
+            CronTrigger(hour=0, minute=0, timezone="Asia/Seoul"),
+            id="fundamental_us",
+            name="US Fundamental Screening",
+            replace_existing=True,
+        )
+
     async def _run_kr_pipeline(self) -> None:
         """Run Korean market pipeline."""
         logger.info("[Scheduler] Starting Korean market pipeline")
@@ -65,6 +83,28 @@ class DailyScheduler:
             logger.info(f"[Scheduler] US pipeline completed: {result}")
         except Exception as e:
             logger.error(f"[Scheduler] US pipeline failed: {e}")
+
+    async def _run_fundamental_kr(self) -> None:
+        """Run KR fundamental screening pipeline."""
+        logger.info("[Scheduler] Starting KR fundamental screening")
+        try:
+            from src.services.fundamental_pipeline import FundamentalPipeline
+            pipeline = FundamentalPipeline()
+            result = await pipeline.run(market="KR")
+            logger.info(f"[Scheduler] KR fundamental screening completed: {result}")
+        except Exception as e:
+            logger.error(f"[Scheduler] KR fundamental screening failed: {e}")
+
+    async def _run_fundamental_us(self) -> None:
+        """Run US fundamental screening pipeline."""
+        logger.info("[Scheduler] Starting US fundamental screening")
+        try:
+            from src.services.fundamental_pipeline import FundamentalPipeline
+            pipeline = FundamentalPipeline()
+            result = await pipeline.run(market="US")
+            logger.info(f"[Scheduler] US fundamental screening completed: {result}")
+        except Exception as e:
+            logger.error(f"[Scheduler] US fundamental screening failed: {e}")
 
     def start(self) -> None:
         """Start the scheduler."""

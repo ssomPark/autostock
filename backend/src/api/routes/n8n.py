@@ -142,6 +142,7 @@ class AggregateRequest(BaseModel):
     chart_pattern_strength: float = 0.0
     support_resistance_strength: float = 0.0
     volume_strength: float = 0.0
+    fundamental_strength: float = 0.0
 
 
 class RecommendationItem(BaseModel):
@@ -286,6 +287,12 @@ async def aggregate_signals(req: AggregateRequest):
             name="volume",
             signal="BUY" if req.volume_strength > 0 else "SELL" if req.volume_strength < 0 else "HOLD",
             strength=req.volume_strength,
+        )
+    if req.fundamental_strength != 0.0:
+        signals["fundamental"] = ComponentSignal(
+            name="fundamental",
+            signal="BUY" if req.fundamental_strength > 0 else "SELL" if req.fundamental_strength < 0 else "HOLD",
+            strength=req.fundamental_strength,
         )
 
     aggregator = SignalAggregator()

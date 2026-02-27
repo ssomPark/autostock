@@ -61,6 +61,11 @@ def _rec_to_dict(r: RecommendationModel) -> dict:
     if not name or name == r.ticker or _needs_kr_resolve(name, r.ticker):
         name = _resolve_name(r.ticker, r.market or "KOSPI")
 
+    # Source field (may be NULL for old records)
+    source = getattr(r, "source", None) or "news"
+    fundamental_score = getattr(r, "fundamental_score", None)
+    fundamental_category = getattr(r, "fundamental_category", None)
+
     return {
         "ticker": r.ticker,
         "name": name,
@@ -74,6 +79,9 @@ def _rec_to_dict(r: RecommendationModel) -> dict:
         "reasoning": r.reasoning,
         "component_signals": r.component_signals,
         "detected_patterns": r.detected_patterns,
+        "source": source,
+        "fundamental_score": fundamental_score,
+        "fundamental_category": fundamental_category,
         "created_at": r.created_at.isoformat() if r.created_at else None,
     }
 
@@ -95,20 +103,26 @@ async def _get_latest_pipeline_ids(
 ) -> list[int]:
     """Get latest pipeline IDs — one per market type when market='all'."""
     if market != "all":
-        result = await session.execute(
-            select(PipelineRunModel.id)
-            .where(PipelineRunModel.status == "completed")
-            .where(PipelineRunModel.recommendations_count > 0)
-            .where(PipelineRunModel.market_type == market)
-            .order_by(desc(PipelineRunModel.completed_at))
-            .limit(1)
-        )
-        row = result.scalar_one_or_none()
-        return [row] if row else []
+        # Include both news and fundamental pipelines for the market
+        ids: list[int] = []
+        market_types = [market, f"{market}_FUND"]
+        for mkt in market_types:
+            result = await session.execute(
+                select(PipelineRunModel.id)
+                .where(PipelineRunModel.status == "completed")
+                .where(PipelineRunModel.recommendations_count > 0)
+                .where(PipelineRunModel.market_type == mkt)
+                .order_by(desc(PipelineRunModel.completed_at))
+                .limit(1)
+            )
+            row = result.scalar_one_or_none()
+            if row:
+                ids.append(row)
+        return ids
 
-    # all: latest pipeline per market type
+    # all: latest pipeline per market type (news + fundamental)
     ids: list[int] = []
-    for mkt in ["KR", "US"]:
+    for mkt in ["KR", "US", "KR_FUND", "US_FUND"]:
         result = await session.execute(
             select(PipelineRunModel.id)
             .where(PipelineRunModel.status == "completed")

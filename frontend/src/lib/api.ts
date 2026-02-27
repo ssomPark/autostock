@@ -344,6 +344,119 @@ export function fetchMarketStatus(): Promise<MarketStatusResponse> {
   return fetchJSON("/prices/market-status");
 }
 
+// --- Events API (proxied through Next.js) ---
+
+export interface EventStock {
+  id: number;
+  event_id: number;
+  ticker: string;
+  name: string;
+  market: string;
+  relation_type: "direct" | "indirect" | "sector";
+  expected_impact: "positive" | "negative" | "neutral";
+  reasoning: string;
+  created_at: string;
+}
+
+export interface MarketEvent {
+  id: number;
+  title: string;
+  description: string;
+  event_date: string;
+  category: string;
+  impact_level: "high" | "medium" | "low";
+  source_url: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  stocks: EventStock[];
+  days_until: number | null;
+}
+
+export interface EventsResponse {
+  success: boolean;
+  data: MarketEvent[];
+  count: number;
+}
+
+export function fetchEvents(params?: {
+  year?: number;
+  month?: number;
+  category?: string;
+  upcoming_days?: number;
+  include_past?: boolean;
+}): Promise<EventsResponse> {
+  const qs = new URLSearchParams();
+  if (params?.year) qs.set("year", String(params.year));
+  if (params?.month) qs.set("month", String(params.month));
+  if (params?.category) qs.set("category", params.category);
+  if (params?.upcoming_days) qs.set("upcoming_days", String(params.upcoming_days));
+  if (params?.include_past) qs.set("include_past", "true");
+  const q = qs.toString();
+  return fetchJSON(`/events${q ? `?${q}` : ""}`);
+}
+
+export function fetchEvent(eventId: number): Promise<{ success: boolean; data: MarketEvent }> {
+  return fetchJSON(`/events/${eventId}`);
+}
+
+export function createEvent(data: {
+  title: string;
+  description?: string;
+  event_date: string;
+  category: string;
+  impact_level?: string;
+  source_url?: string;
+  stocks?: Array<{
+    ticker: string;
+    name: string;
+    market: string;
+    relation_type?: string;
+    expected_impact?: string;
+    reasoning?: string;
+  }>;
+}): Promise<{ success: boolean; data: MarketEvent }> {
+  return fetchJSON("/events", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export function updateEvent(
+  eventId: number,
+  data: Record<string, unknown>,
+): Promise<{ success: boolean; data: MarketEvent }> {
+  return fetchJSON(`/events/${eventId}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export function deleteEvent(eventId: number): Promise<{ success: boolean }> {
+  return fetchJSON(`/events/${eventId}`, { method: "DELETE" });
+}
+
+export function addEventStock(
+  eventId: number,
+  stock: {
+    ticker: string;
+    name: string;
+    market: string;
+    relation_type?: string;
+    expected_impact?: string;
+    reasoning?: string;
+  },
+): Promise<{ success: boolean; data: EventStock }> {
+  return fetchJSON(`/events/${eventId}/stocks`, {
+    method: "POST",
+    body: JSON.stringify(stock),
+  });
+}
+
+export function removeEventStock(eventId: number, stockId: number): Promise<{ success: boolean }> {
+  return fetchJSON(`/events/${eventId}/stocks/${stockId}`, { method: "DELETE" });
+}
+
 export function subscribePipelineStream(
   onEvent: (data: Record<string, unknown>) => void,
   onError?: (err: Event) => void,

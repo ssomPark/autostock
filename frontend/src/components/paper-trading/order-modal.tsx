@@ -131,6 +131,22 @@ export function OrderModal({
             )}
           </div>
 
+          {/* Cash balance display */}
+          {cashBalance != null && (
+            <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-blue-600/10 border border-blue-600/20">
+              <div className="flex items-center gap-2 text-sm">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-400">
+                  <rect x="2" y="6" width="20" height="12" rx="2" />
+                  <path d="M2 10h20" />
+                </svg>
+                <span className="text-[var(--muted)]">보유 잔고</span>
+              </div>
+              <span className="font-bold text-blue-400">
+                {cashBalance.toLocaleString("ko-KR", { maximumFractionDigits: 0 })}원
+              </span>
+            </div>
+          )}
+
           {/* Quantity input */}
           <div>
             <label className="block text-sm text-[var(--muted)] mb-1">수량</label>
@@ -176,6 +192,25 @@ export function OrderModal({
                   {q}주
                 </button>
               ))}
+              {cashBalance != null && price > 0 && (
+                <button
+                  onClick={() => {
+                    const unitCost = isUS && exchangeRate ? price * exchangeRate : price;
+                    const maxQty = Math.floor(cashBalance / unitCost);
+                    setQuantity(Math.max(1, maxQty));
+                  }}
+                  className={`flex-1 py-1 rounded text-xs font-medium transition-colors ${
+                    (() => {
+                      const unitCost = isUS && exchangeRate ? price * exchangeRate : price;
+                      return quantity === Math.floor(cashBalance / unitCost);
+                    })()
+                      ? "bg-green-600 text-white"
+                      : "bg-green-600/20 text-green-400 hover:bg-green-600/30"
+                  }`}
+                >
+                  최대
+                </button>
+              )}
             </div>
           </div>
 

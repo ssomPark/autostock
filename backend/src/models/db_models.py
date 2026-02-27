@@ -34,6 +34,7 @@ class PipelineRunModel(Base):
     candidates_count = Column(Integer, default=0)
     recommendations_count = Column(Integer, default=0)
     error_message = Column(Text, nullable=True)
+    source = Column(String(20), nullable=False, default="news")  # "news" | "fundamental"
 
     news_articles = relationship("NewsArticleModel", back_populates="pipeline_run")
     keywords = relationship("KeywordModel", back_populates="pipeline_run")
@@ -147,6 +148,9 @@ class RecommendationModel(Base):
     reasoning = Column(Text, default="")
     component_signals = Column(JSONB, default=dict)
     detected_patterns = Column(JSONB, default=list)
+    source = Column(String(20), nullable=False, default="news")  # "news" | "fundamental"
+    fundamental_score = Column(Float, nullable=True)  # 0~100
+    fundamental_category = Column(String(20), nullable=True)  # "value"|"quality"|"growth"|"balanced"
     created_at = Column(DateTime, default=datetime.now)
 
     pipeline_run = relationship("PipelineRunModel", back_populates="recommendations")
@@ -307,6 +311,52 @@ class PaperTradeModel(Base):
         Index("ix_paper_trades_ticker", "ticker"),
         Index("ix_paper_trades_executed_at", "executed_at"),
         Index("ix_paper_trades_source", "source"),
+    )
+
+
+class MarketEventModel(Base):
+    """시장 이벤트 (이벤트 드리븐 투자용)."""
+    __tablename__ = "market_events"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    title = Column(String(300), nullable=False)
+    description = Column(Text, default="")
+    event_date = Column(DateTime, nullable=False)
+    category = Column(String(30), nullable=False)  # policy/earnings/product/conference/ipo/dividend/global
+    impact_level = Column(String(10), nullable=False, default="medium")  # high/medium/low
+    source_url = Column(String(1000), nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    stocks = relationship("EventStockModel", back_populates="event", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("ix_market_events_date", "event_date"),
+        Index("ix_market_events_category", "category"),
+        Index("ix_market_events_active", "is_active"),
+    )
+
+
+class EventStockModel(Base):
+    """이벤트-종목 매핑 (수혜주/피해주)."""
+    __tablename__ = "event_stocks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_id = Column(Integer, ForeignKey("market_events.id", ondelete="CASCADE"), nullable=False)
+    ticker = Column(String(20), nullable=False)
+    name = Column(String(200), nullable=False)
+    market = Column(String(10), nullable=False)
+    relation_type = Column(String(20), nullable=False, default="direct")  # direct/indirect/sector
+    expected_impact = Column(String(10), nullable=False, default="positive")  # positive/negative/neutral
+    reasoning = Column(Text, default="")
+    created_at = Column(DateTime, default=datetime.now)
+
+    event = relationship("MarketEventModel", back_populates="stocks")
+
+    __table_args__ = (
+        Index("ix_event_stocks_event_id", "event_id"),
+        Index("ix_event_stocks_ticker", "ticker"),
     )
 
 

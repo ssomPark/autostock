@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime
+import threading
+from datetime import datetime, timedelta
 
 import httpx
 from crewai.tools import BaseTool
@@ -17,6 +18,51 @@ from src.config.settings import settings
 
 logger = logging.getLogger(__name__)
 
+# --- KIS OAuth token singleton ---
+_kis_token: str = ""
+_kis_token_expires: datetime | None = None
+_kis_token_lock = threading.Lock()
+_kis_token_fail_until: datetime | None = None  # cooldown after failure
+
+
+def _ensure_kis_token() -> str:
+    """Get or refresh KIS OAuth token (shared across all instances)."""
+    global _kis_token, _kis_token_expires, _kis_token_fail_until
+
+    # Fast path: valid token (lock-free)
+    if _kis_token and _kis_token_expires and datetime.now() < _kis_token_expires:
+        return _kis_token
+
+    with _kis_token_lock:
+        # Double-check after acquiring lock
+        if _kis_token and _kis_token_expires and datetime.now() < _kis_token_expires:
+            return _kis_token
+
+        # Cooldown check inside lock
+        if _kis_token_fail_until and datetime.now() < _kis_token_fail_until:
+            raise RuntimeError("KIS token unavailable (cooldown)")
+
+        url = f"{settings.kis_base_url}/oauth2/tokenP"
+        body = {
+            "grant_type": "client_credentials",
+            "appkey": settings.kis_app_key,
+            "appsecret": settings.kis_app_secret,
+        }
+        try:
+            resp = httpx.post(url, json=body, timeout=10)
+            resp.raise_for_status()
+        except Exception as e:
+            _kis_token_fail_until = datetime.now() + timedelta(seconds=60)
+            logger.warning(f"KIS token request failed, cooldown 60s: {e}")
+            raise
+
+        data = resp.json()
+        _kis_token = data["access_token"]
+        _kis_token_expires = datetime.now() + timedelta(hours=23)
+        _kis_token_fail_until = None
+        logger.info("KIS OAuth token issued successfully")
+        return _kis_token
+
 
 class KoreanStockAPITool(BaseTool):
     name: str = "korean_stock_api"
@@ -25,8 +71,6 @@ class KoreanStockAPITool(BaseTool):
         "input으로 종목코드와 조회 유형을 JSON으로 받습니다. "
         '예: {"ticker": "005930", "action": "price"} 또는 {"ticker": "005930", "action": "ohlcv", "period": "D"}'
     )
-    _access_token: str = ""
-    _token_expires: datetime | None = None
 
     def _run(self, input_str: str) -> str:
         try:
@@ -41,7 +85,7 @@ class KoreanStockAPITool(BaseTool):
             return self._mock_data(ticker, action)
 
         try:
-            self._ensure_token()
+            _ensure_kis_token()
             if action == "price":
                 return json.dumps(self._get_current_price(ticker), default=str)
             elif action == "ohlcv":
@@ -55,28 +99,9 @@ class KoreanStockAPITool(BaseTool):
             logger.error(f"KIS API error: {e}")
             return json.dumps({"error": str(e)})
 
-    def _ensure_token(self) -> None:
-        """Get or refresh OAuth token."""
-        if self._access_token and self._token_expires and datetime.now() < self._token_expires:
-            return
-
-        url = f"{settings.kis_base_url}/oauth2/tokenP"
-        body = {
-            "grant_type": "client_credentials",
-            "appkey": settings.kis_app_key,
-            "appsecret": settings.kis_app_secret,
-        }
-        resp = httpx.post(url, json=body, timeout=10)
-        resp.raise_for_status()
-        data = resp.json()
-        self._access_token = data["access_token"]
-        # KIS 토큰은 약 24시간 유효 — 안전하게 23시간 후 갱신
-        from datetime import timedelta
-        self._token_expires = datetime.now() + timedelta(hours=23)
-
     def _get_headers(self) -> dict:
         return {
-            "authorization": f"Bearer {self._access_token}",
+            "authorization": f"Bearer {_kis_token}",
             "appkey": settings.kis_app_key,
             "appsecret": settings.kis_app_secret,
             "Content-Type": "application/json; charset=utf-8",

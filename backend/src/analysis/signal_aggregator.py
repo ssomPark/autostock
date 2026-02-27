@@ -1,22 +1,24 @@
 """Signal aggregation module.
 
 Combines all analysis signals with weighted scoring:
-- News sentiment: 20%
-- Candlestick patterns: 20%
-- Chart patterns: 25%
-- Support/Resistance: 20%
-- Volume: 15%
+- News sentiment: 17%
+- Candlestick patterns: 17%
+- Chart patterns: 21%
+- Support/Resistance: 17%
+- Volume: 13%
+- Fundamental: 15%
 """
 
 from dataclasses import dataclass
 
 
 DEFAULT_WEIGHTS = {
-    "news_sentiment": 0.20,
-    "candlestick": 0.20,
-    "chart_pattern": 0.25,
-    "support_resistance": 0.20,
-    "volume": 0.15,
+    "news_sentiment": 0.17,
+    "candlestick": 0.17,
+    "chart_pattern": 0.21,
+    "support_resistance": 0.17,
+    "volume": 0.13,
+    "fundamental": 0.15,
 }
 
 THRESHOLDS = {
@@ -127,6 +129,7 @@ class SignalAggregator:
             "chart_pattern": "차트 패턴",
             "support_resistance": "지지/저항",
             "volume": "거래량",
+            "fundamental": "펀더멘탈",
         }
 
         parts = []

@@ -117,10 +117,23 @@ function SearchPage() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, []);
 
+  // Track whether a suggestion was just selected (to skip debounce on programmatic setInput)
+  const justSelectedRef = useRef(false);
+
   // Debounced search
   const handleInputChange = useCallback((value: string) => {
     setInput(value);
     setHighlightIdx(-1);
+
+    // If a suggestion was just selected, the input change is programmatic — skip search
+    if (justSelectedRef.current) {
+      justSelectedRef.current = false;
+      return;
+    }
+
+    // User is actively editing — clear previous ticker so stale results don't linger
+    setTicker("");
+
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (value.trim().length < 2) {
       setSuggestions([]);
@@ -140,6 +153,8 @@ function SearchPage() {
   }, []);
 
   const selectSuggestion = useCallback((item: StockSearchResult) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    justSelectedRef.current = true;
     setInput(`${item.name} (${item.ticker})`);
     setShowDropdown(false);
     setSuggestions([]);

@@ -266,6 +266,11 @@ export default function RecommendationsPage() {
                     <Link href={`/analysis/${rec.ticker}?market=${rec.market}`} className="hover:underline">
                       <span className="font-medium">{rec.name}</span>
                       <span className="text-[var(--muted)] text-sm ml-1">({rec.ticker})</span>
+                      {rec.source === "fundamental" && (
+                        <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400">
+                          펀더멘탈
+                        </span>
+                      )}
                     </Link>
                     <div className="flex items-center gap-2">
                       {rec.action === "BUY" && (
@@ -434,6 +439,11 @@ export default function RecommendationsPage() {
                           <Link href={`/analysis/${rec.ticker}?market=${rec.market}`} className="hover:underline" onClick={(e) => e.stopPropagation()}>
                             {rec.name} <span className="text-[var(--muted)] text-sm">({rec.ticker})</span>
                           </Link>
+                          {rec.source === "fundamental" && (
+                            <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400">
+                              펀더멘탈
+                            </span>
+                          )}
                         </td>
                         <td className="p-4">
                           <Link href={`/analysis/${rec.ticker}?market=${rec.market}`} onClick={(e) => e.stopPropagation()}>
@@ -518,6 +528,7 @@ export default function RecommendationsPage() {
                                       support_resistance: "지지/저항",
                                       volume: "거래량",
                                       news_sentiment: "뉴스",
+                                      fundamental: "펀더멘탈",
                                     };
                                     const v = typeof val === "number" ? val : 0;
                                     const color = v > 0 ? "#4ade80" : v < 0 ? "#f87171" : "#6b7280";
