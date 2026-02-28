@@ -97,6 +97,7 @@ News: 20% | Candlestick: 20% | ChartPattern: 25% | S/R: 20% | Volume: 15%
 | `verify-auth` | OAuth 인증, JWT, DB 모델 제약, Route 인증 패턴, CORS 설정, Frontend 토큰 관리 검증 |
 | `verify-news` | 뉴스 분석 모듈 핵심 규칙 검증 (감성 키워드 일관성, NEWS_TOPIC_MAP 구조, API 응답 필드, FE-BE 감성 타입 동기화) |
 | `verify-paper-trading` | 모의 투자 잔고 일관성, 매수/매도 로직, 가격 fallback, DB 모델 제약, FE-BE API 동기화 검증 |
+| `verify-rate-limit` | 비로그인 분석 횟수 제한(Redis rate limit), 429 응답, CORS expose_headers, FE RateLimitError/UI 검증 |
 
 ## Environment Variables
 
