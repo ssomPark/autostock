@@ -7,16 +7,13 @@ import {
   fetchAdminDashboard,
   fetchAdminUsers,
   fetchAdminUserDetail,
-  fetchAdminAdRewards,
-  fetchAdminAdRewardStats,
-  fetchAdminAdRewardSettings,
   fetchAdminPaperTradingStats,
   fetchAdminEvents,
   toggleAdminEventActive,
   triggerPipeline,
 } from "@/lib/api";
 
-type Tab = "dashboard" | "users" | "ad-rewards" | "paper-trading" | "events" | "pipeline";
+type Tab = "dashboard" | "users" | "paper-trading" | "events" | "pipeline";
 
 function formatNum(n: number) {
   return n.toLocaleString("ko-KR");
@@ -60,7 +57,6 @@ function DashboardTab() {
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
       <SummaryCard icon="👥" title="전체 사용자" value={data.users.total} sub={`오늘 +${data.users.today}`} />
       <SummaryCard icon="📈" title="전체 거래" value={data.trades.total} sub={`오늘 +${data.trades.today}`} />
-      <SummaryCard icon="🎬" title="광고 보상" value={data.ad_rewards.total} sub={`총 ${formatKRW(data.ad_rewards.total_amount)}원`} />
       <SummaryCard icon="📅" title="활성 이벤트" value={data.events.active} />
       <SummaryCard icon="⚙️" title="파이프라인 (7일)" value={data.pipeline.runs_this_week} />
     </div>
@@ -184,7 +180,6 @@ function UsersTab() {
             <div className="space-y-2 text-sm">
               <p><span className="text-[var(--muted)]">Provider:</span> {detail.provider}</p>
               <p><span className="text-[var(--muted)]">가입일:</span> {detail.created_at?.split("T")[0]}</p>
-              <p><span className="text-[var(--muted)]">광고 보상 횟수:</span> {detail.reward_count}</p>
               {detail.accounts?.length > 0 && (
                 <div>
                   <p className="text-[var(--muted)] mb-1">모의 투자 계좌:</p>
@@ -200,118 +195,6 @@ function UsersTab() {
             <button onClick={() => setDetail(null)} className="mt-4 w-full py-2 rounded-lg bg-white/10 hover:bg-white/20 text-sm transition-colors">닫기</button>
           </div>
         </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Ad Rewards Tab ─────────────────────────────────────────
-function AdRewardsTab() {
-  const [stats, setStats] = useState<any>(null);
-  const [adSettings, setAdSettings] = useState<any>(null);
-  const [logs, setLogs] = useState<any[]>([]);
-  const [total, setTotal] = useState(0);
-  const [statusFilter, setStatusFilter] = useState("");
-  const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    Promise.all([fetchAdminAdRewardStats(), fetchAdminAdRewardSettings()])
-      .then(([s, settings]) => { setStats(s); setAdSettings(settings); })
-      .catch(() => {});
-  }, []);
-
-  const loadLogs = useCallback(async () => {
-    setLoading(true);
-    try {
-      const res = await fetchAdminAdRewards({ status: statusFilter, page, size: 30 });
-      setLogs(res.logs);
-      setTotal(res.total);
-    } catch { /* ignore */ }
-    setLoading(false);
-  }, [statusFilter, page]);
-
-  useEffect(() => { loadLogs(); }, [loadLogs]);
-
-  const totalPages = Math.ceil(total / 30);
-
-  return (
-    <div className="space-y-4">
-      {/* Stats */}
-      {stats && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <SummaryCard icon="🎯" title="총 지급" value={stats.total_claimed} sub={`총 ${formatKRW(stats.total_amount)}원`} />
-          <SummaryCard icon="📊" title="오늘" value={stats.today_count} sub={`${formatKRW(stats.today_amount)}원`} />
-          <SummaryCard icon="💰" title="평균 보상" value={`${formatKRW(stats.avg_amount)}원`} />
-          {adSettings && (
-            <SummaryCard icon="⏱️" title="쿨다운" value={`${adSettings.cooldown_seconds / 60}분`} sub={`${formatKRW(adSettings.min_amount)}~${formatKRW(adSettings.max_amount)}원`} />
-          )}
-        </div>
-      )}
-
-      {/* Filter */}
-      <div className="flex gap-2">
-        {["", "pending", "claimed", "expired"].map((s) => (
-          <button
-            key={s}
-            onClick={() => { setStatusFilter(s); setPage(1); }}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-              statusFilter === s ? "bg-blue-600/20 text-blue-400" : "bg-white/5 text-[var(--muted)] hover:bg-white/10"
-            }`}
-          >
-            {s === "" ? "전체" : s === "pending" ? "대기" : s === "claimed" ? "지급" : "만료"}
-          </button>
-        ))}
-      </div>
-
-      {loading ? <LoadingSkeleton /> : (
-        <>
-          <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg overflow-hidden">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-[var(--card-border)] text-left text-[var(--muted)]">
-                  <th className="px-4 py-3 font-medium">ID</th>
-                  <th className="px-4 py-3 font-medium">유저ID</th>
-                  <th className="px-4 py-3 font-medium">금액</th>
-                  <th className="px-4 py-3 font-medium">상태</th>
-                  <th className="px-4 py-3 font-medium hidden sm:table-cell">생성일</th>
-                  <th className="px-4 py-3 font-medium hidden sm:table-cell">지급일</th>
-                </tr>
-              </thead>
-              <tbody>
-                {logs.map((log) => (
-                  <tr key={log.id} className="border-b border-[var(--card-border)] last:border-0 hover:bg-white/5">
-                    <td className="px-4 py-3">{log.id}</td>
-                    <td className="px-4 py-3">{log.user_id}</td>
-                    <td className="px-4 py-3">{log.reward_amount ? `${formatNum(log.reward_amount)}원` : "-"}</td>
-                    <td className="px-4 py-3">
-                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                        log.status === "claimed" ? "bg-green-500/20 text-green-400" :
-                        log.status === "pending" ? "bg-amber-500/20 text-amber-400" :
-                        "bg-red-500/20 text-red-400"
-                      }`}>
-                        {log.status === "claimed" ? "지급" : log.status === "pending" ? "대기" : "만료"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 hidden sm:table-cell text-[var(--muted)]">{log.created_at?.split("T")[0]}</td>
-                    <td className="px-4 py-3 hidden sm:table-cell text-[var(--muted)]">{log.claimed_at?.split("T")[0] ?? "-"}</td>
-                  </tr>
-                ))}
-                {logs.length === 0 && (
-                  <tr><td colSpan={6} className="px-4 py-8 text-center text-[var(--muted)]">데이터 없음</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {totalPages > 1 && (
-            <div className="flex items-center justify-center gap-2">
-              <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1} className="px-3 py-1.5 rounded bg-white/5 text-sm disabled:opacity-30">이전</button>
-              <span className="text-sm text-[var(--muted)]">{page} / {totalPages}</span>
-              <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages} className="px-3 py-1.5 rounded bg-white/5 text-sm disabled:opacity-30">다음</button>
-            </div>
-          )}
-        </>
       )}
     </div>
   );
@@ -519,7 +402,6 @@ export default function AdminPage() {
   const tabs: { key: Tab; label: string }[] = [
     { key: "dashboard", label: "대시보드" },
     { key: "users", label: "사용자" },
-    { key: "ad-rewards", label: "광고 보상" },
     { key: "paper-trading", label: "모의 투자" },
     { key: "events", label: "이벤트" },
     { key: "pipeline", label: "파이프라인" },
@@ -552,7 +434,6 @@ export default function AdminPage() {
       {/* Tab Content */}
       {tab === "dashboard" && <DashboardTab />}
       {tab === "users" && <UsersTab />}
-      {tab === "ad-rewards" && <AdRewardsTab />}
       {tab === "paper-trading" && <PaperTradingTab />}
       {tab === "events" && <EventsTab />}
       {tab === "pipeline" && <PipelineTab />}

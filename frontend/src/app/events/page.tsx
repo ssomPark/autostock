@@ -3,6 +3,7 @@
 import { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
+import { useAuth } from "@/lib/auth-context";
 import {
   fetchEvents,
   createEvent,
@@ -432,10 +433,11 @@ function AddStockModal({ isOpen, onClose, eventId, onAdded }: {
 
 // --- Event Detail Panel ---
 
-function EventDetailPanel({ event, onClose, onRefresh }: {
+function EventDetailPanel({ event, onClose, onRefresh, isAdmin }: {
   event: MarketEvent;
   onClose: () => void;
   onRefresh: () => void;
+  isAdmin?: boolean;
 }) {
   const [showAddStock, setShowAddStock] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -488,17 +490,19 @@ function EventDetailPanel({ event, onClose, onRefresh }: {
             </p>
           </div>
           <div className="flex items-center gap-1">
-            <button
-              onClick={handleDeleteEvent}
-              disabled={deleting}
-              className="p-1.5 rounded hover:bg-red-500/20 text-[var(--muted)] hover:text-red-400 transition-colors"
-              title="이벤트 삭제"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="3 6 5 6 21 6" />
-                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-              </svg>
-            </button>
+            {isAdmin && (
+              <button
+                onClick={handleDeleteEvent}
+                disabled={deleting}
+                className="p-1.5 rounded hover:bg-red-500/20 text-[var(--muted)] hover:text-red-400 transition-colors"
+                title="이벤트 삭제"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                </svg>
+              </button>
+            )}
             <button
               onClick={onClose}
               className="p-1.5 rounded hover:bg-white/10 text-[var(--muted)] transition-colors"
@@ -530,12 +534,14 @@ function EventDetailPanel({ event, onClose, onRefresh }: {
         <div>
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-sm font-semibold">관련 종목 ({event.stocks.length})</h3>
-            <button
-              onClick={() => setShowAddStock(true)}
-              className="text-xs px-2 py-1 rounded bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 transition-colors"
-            >
-              + 종목 추가
-            </button>
+            {isAdmin && (
+              <button
+                onClick={() => setShowAddStock(true)}
+                className="text-xs px-2 py-1 rounded bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 transition-colors"
+              >
+                + 종목 추가
+              </button>
+            )}
           </div>
 
           {event.stocks.length === 0 ? (
@@ -577,17 +583,19 @@ function EventDetailPanel({ event, onClose, onRefresh }: {
                           {s.reasoning}
                         </span>
                       )}
-                      <button
-                        onClick={() => handleRemoveStock(s.id)}
-                        disabled={removingStockId === s.id}
-                        className="p-1 rounded hover:bg-red-500/20 text-[var(--muted)] hover:text-red-400 transition-colors"
-                        title="제거"
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <line x1="18" y1="6" x2="6" y2="18" />
-                          <line x1="6" y1="6" x2="18" y2="18" />
-                        </svg>
-                      </button>
+                      {isAdmin && (
+                        <button
+                          onClick={() => handleRemoveStock(s.id)}
+                          disabled={removingStockId === s.id}
+                          className="p-1 rounded hover:bg-red-500/20 text-[var(--muted)] hover:text-red-400 transition-colors"
+                          title="제거"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <line x1="18" y1="6" x2="6" y2="18" />
+                            <line x1="6" y1="6" x2="18" y2="18" />
+                          </svg>
+                        </button>
+                      )}
                     </div>
                   </div>
                 );
@@ -794,6 +802,8 @@ function UpcomingEventsList({
 // --- Main Page ---
 
 export default function EventsPage() {
+  const { user } = useAuth();
+  const isAdmin = !!user?.is_admin;
   const queryClient = useQueryClient();
   const now = new Date();
   const [year, setYear] = useState(now.getFullYear());
@@ -887,12 +897,14 @@ export default function EventsPage() {
               목록
             </button>
           </div>
-          <button
-            onClick={() => setShowAddModal(true)}
-            className="px-3 py-1.5 rounded-lg text-sm bg-blue-600 text-white hover:bg-blue-700 transition-colors"
-          >
-            + 이벤트 등록
-          </button>
+          {isAdmin && (
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="px-3 py-1.5 rounded-lg text-sm bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+            >
+              + 이벤트 등록
+            </button>
+          )}
         </div>
       </div>
 
@@ -1031,6 +1043,7 @@ export default function EventsPage() {
                 event={selectedEvent}
                 onClose={() => setSelectedEvent(null)}
                 onRefresh={refreshEvents}
+                isAdmin={isAdmin}
               />
             ) : (
               <UpcomingEventsList

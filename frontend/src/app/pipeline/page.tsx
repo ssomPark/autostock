@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   triggerPipeline,
@@ -392,7 +393,8 @@ function HistoryTab() {
 /* ─── Main Page ─── */
 
 export default function PipelinePage() {
-  const { user, isLoading: authLoading, logout } = useAuth();
+  const { user, isLoading: authLoading, isAuthenticated, logout } = useAuth();
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<"run" | "history">("run");
   const [market, setMarket] = useState("KR");
   const [adminError, setAdminError] = useState<string | null>(null);
@@ -473,10 +475,25 @@ export default function PipelinePage() {
     retry: false,
   });
 
+  // Admin-only access
+  useEffect(() => {
+    if (!authLoading && (!isAuthenticated || !user?.is_admin)) {
+      router.replace("/");
+    }
+  }, [authLoading, isAuthenticated, user, router]);
+
   const isRunning = state.status === "running";
   const currentStep = state.steps.find((s) => s.status === "running");
   const completedCount = state.steps.filter((s) => s.status === "completed").length;
   const batch = state.batch;
+
+  if (authLoading || !user?.is_admin) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="text-[var(--muted)]">로딩 중...</div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 max-w-4xl">
