@@ -292,6 +292,14 @@ class EventResponse(BaseModel):
     days_until: Optional[int] = None
 
 
+class BulkDeleteIn(BaseModel):
+    ids: list[int]
+
+
+class UpdateMemoIn(BaseModel):
+    memo: Optional[str] = None
+
+
 class DashboardSummary(BaseModel):
     total_recommendations: int = 0
     buy_count: int = 0

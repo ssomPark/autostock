@@ -13,7 +13,6 @@ const navItems = [
   { href: "/events", label: "이벤트 캘린더", icon: "📅", authOnly: true },
   { href: "/paper-trading", label: "모의 투자", icon: "💰", authOnly: true },
   { href: "/news", label: "뉴스", icon: "📰" },
-  { href: "/pipeline", label: "파이프라인", icon: "⚙️", adminOnly: true },
   { href: "/admin", label: "관리자", icon: "🛡️", adminOnly: true },
 ] as const;
 

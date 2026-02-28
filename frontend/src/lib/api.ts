@@ -170,8 +170,25 @@ export async function removeFromWatchlistAPI(ticker: string) {
 
 // --- Saved Analyses API (authenticated, direct to backend) ---
 
-export async function fetchSavedAnalyses() {
-  return fetchWithAuth("/api/saved-analyses");
+export async function fetchSavedAnalyses(params?: {
+  search?: string;
+  signal?: string;
+  market?: string;
+  grade?: string;
+  sort_by?: string;
+  order?: string;
+  latest_only?: boolean;
+}) {
+  const qs = new URLSearchParams();
+  if (params?.search) qs.set("search", params.search);
+  if (params?.signal) qs.set("signal", params.signal);
+  if (params?.market) qs.set("market", params.market);
+  if (params?.grade) qs.set("grade", params.grade);
+  if (params?.sort_by) qs.set("sort_by", params.sort_by);
+  if (params?.order) qs.set("order", params.order);
+  if (params?.latest_only !== undefined) qs.set("latest_only", String(params.latest_only));
+  const q = qs.toString();
+  return fetchWithAuth(`/api/saved-analyses${q ? `?${q}` : ""}`);
 }
 
 export async function fetchSavedAnalysis(ticker: string) {
@@ -188,6 +205,32 @@ export async function saveAnalysisAPI(data: Record<string, unknown>) {
 export async function deleteSavedAnalysisAPI(id: number) {
   return fetchWithAuth(`/api/saved-analyses/${id}`, {
     method: "DELETE",
+  });
+}
+
+export async function bulkDeleteSavedAnalyses(ids: number[]) {
+  return fetchWithAuth("/api/saved-analyses/bulk-delete", {
+    method: "POST",
+    body: JSON.stringify({ ids }),
+  });
+}
+
+export async function fetchSavedAnalysesStats() {
+  return fetchWithAuth("/api/saved-analyses/stats");
+}
+
+export async function fetchAnalysisHistory(ticker: string) {
+  return fetchWithAuth(`/api/saved-analyses/history/${ticker}`);
+}
+
+export async function fetchAnalysisPerformance() {
+  return fetchWithAuth("/api/saved-analyses/performance");
+}
+
+export async function updateAnalysisMemo(id: number, memo: string | null) {
+  return fetchWithAuth(`/api/saved-analyses/${id}/memo`, {
+    method: "PUT",
+    body: JSON.stringify({ memo }),
   });
 }
 
@@ -599,6 +642,10 @@ export async function fetchAdminAdRewardStats() {
 
 export async function fetchAdminAdRewardSettings() {
   return fetchWithAuth("/api/admin/ad-rewards/settings");
+}
+
+export async function fetchAdminSavedAnalysesStats() {
+  return fetchWithAuth("/api/admin/saved-analyses/stats");
 }
 
 export async function fetchAdminPaperTradingStats() {

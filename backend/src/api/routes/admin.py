@@ -16,7 +16,9 @@ from src.models.db_models import (
     PaperAccountModel,
     PaperTradeModel,
     PipelineRunModel,
+    SavedAnalysisModel,
     UserModel,
+    WatchlistItemModel,
 )
 
 router = APIRouter()
@@ -73,10 +75,33 @@ async def dashboard(
         )
     ).scalar() or 0
 
+    # Saved analyses stats
+    total_analyses = (
+        await session.execute(select(func.count(SavedAnalysisModel.id)))
+    ).scalar() or 0
+    analyses_unique_users = (
+        await session.execute(select(func.count(func.distinct(SavedAnalysisModel.user_id))))
+    ).scalar() or 0
+    analyses_today = (
+        await session.execute(
+            select(func.count(SavedAnalysisModel.id)).where(SavedAnalysisModel.created_at >= today_start)
+        )
+    ).scalar() or 0
+
+    # Watchlist stats
+    watchlist_total = (
+        await session.execute(select(func.count(WatchlistItemModel.id)))
+    ).scalar() or 0
+    watchlist_unique_users = (
+        await session.execute(select(func.count(func.distinct(WatchlistItemModel.user_id))))
+    ).scalar() or 0
+
     return {
         "users": {"total": total_users, "today": new_users_today},
         "trades": {"total": total_trades, "today": trades_today},
         "ad_rewards": {"total": total_rewards, "today": rewards_today, "total_amount": total_reward_amount},
+        "saved_analyses": {"total": total_analyses, "unique_users": analyses_unique_users, "today": analyses_today},
+        "watchlist": {"total_items": watchlist_total, "unique_users": watchlist_unique_users},
         "events": {"active": active_events},
         "pipeline": {"runs_this_week": pipeline_runs_week},
     }
@@ -124,13 +149,87 @@ async def list_users(
     }
 
 
+@router.get("/saved-analyses/stats")
+async def saved_analyses_stats(
+    _=Depends(get_admin_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Admin-level saved analyses aggregate statistics."""
+    total = (
+        await session.execute(select(func.count(SavedAnalysisModel.id)))
+    ).scalar() or 0
+    unique_tickers = (
+        await session.execute(select(func.count(func.distinct(SavedAnalysisModel.ticker))))
+    ).scalar() or 0
+
+    # Signal distribution
+    signal_rows = (
+        await session.execute(
+            select(SavedAnalysisModel.signal, func.count(SavedAnalysisModel.id))
+            .group_by(SavedAnalysisModel.signal)
+        )
+    ).all()
+    signal_counts = {row[0]: row[1] for row in signal_rows}
+
+    # Grade distribution
+    grade_rows = (
+        await session.execute(
+            select(SavedAnalysisModel.grade, func.count(SavedAnalysisModel.id))
+            .group_by(SavedAnalysisModel.grade)
+        )
+    ).all()
+    grade_distribution = {row[0]: row[1] for row in grade_rows}
+
+    # Top analyzed tickers
+    top_rows = (
+        await session.execute(
+            select(SavedAnalysisModel.ticker, SavedAnalysisModel.name, func.count(SavedAnalysisModel.id).label("cnt"))
+            .group_by(SavedAnalysisModel.ticker, SavedAnalysisModel.name)
+            .order_by(func.count(SavedAnalysisModel.id).desc())
+            .limit(5)
+        )
+    ).all()
+    top_analyzed_tickers = [{"ticker": r[0], "name": r[1], "count": r[2]} for r in top_rows]
+
+    # Recent analyses (no user info for privacy)
+    recent_rows = (
+        await session.execute(
+            select(SavedAnalysisModel)
+            .order_by(SavedAnalysisModel.created_at.desc())
+            .limit(10)
+        )
+    ).scalars().all()
+    recent_analyses = [
+        {
+            "id": a.id,
+            "ticker": a.ticker,
+            "name": a.name,
+            "market": a.market,
+            "signal": a.signal,
+            "grade": a.grade,
+            "confidence": a.confidence,
+            "analyzed_at": a.analyzed_at.isoformat() if a.analyzed_at else None,
+        }
+        for a in recent_rows
+    ]
+
+    return {
+        "total": total,
+        "unique_tickers": unique_tickers,
+        "signal_counts": signal_counts,
+        "grade_distribution": grade_distribution,
+        "top_analyzed_tickers": top_analyzed_tickers,
+        "recent_analyses": recent_analyses,
+    }
+
+
 @router.get("/users/{user_id}")
 async def get_user_detail(
     user_id: int,
     _=Depends(get_admin_user),
     session: AsyncSession = Depends(get_async_session),
 ):
-    """User detail with accounts and reward count."""
+    """User detail with accounts, reward count, analysis count, and watchlist count."""
     result = await session.execute(
         select(UserModel).options(selectinload(UserModel.paper_accounts)).where(UserModel.id == user_id)
     )
@@ -142,6 +241,18 @@ async def get_user_detail(
     reward_count = (
         await session.execute(
             select(func.count(AdRewardLogModel.id)).where(AdRewardLogModel.user_id == user_id)
+        )
+    ).scalar() or 0
+
+    analysis_count = (
+        await session.execute(
+            select(func.count(SavedAnalysisModel.id)).where(SavedAnalysisModel.user_id == user_id)
+        )
+    ).scalar() or 0
+
+    watchlist_count = (
+        await session.execute(
+            select(func.count(WatchlistItemModel.id)).where(WatchlistItemModel.user_id == user_id)
         )
     ).scalar() or 0
 
@@ -166,6 +277,8 @@ async def get_user_detail(
             for a in user.paper_accounts
         ],
         "reward_count": reward_count,
+        "analysis_count": analysis_count,
+        "watchlist_count": watchlist_count,
     }
 
 

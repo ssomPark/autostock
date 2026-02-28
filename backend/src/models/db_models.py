@@ -225,12 +225,15 @@ class SavedAnalysisModel(Base):
     score_data = Column(JSONB, default=dict)       # 전체 score API 응답
     financials_data = Column(JSONB, default=dict)   # 전체 financials API 응답
     analyzed_at = Column(DateTime, default=datetime.now)
+    created_at = Column(DateTime, default=datetime.now)
+    memo = Column(Text, nullable=True)
 
     user = relationship("UserModel", back_populates="saved_analyses")
 
     __table_args__ = (
         Index("ix_saved_analyses_user_id", "user_id"),
         Index("ix_saved_analyses_user_ticker", "user_id", "ticker"),
+        Index("ix_saved_analyses_user_ticker_analyzed", "user_id", "ticker", "analyzed_at"),
     )
 
 

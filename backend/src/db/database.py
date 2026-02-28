@@ -68,6 +68,10 @@ async def init_db() -> None:
             "ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS fundamental_score FLOAT",
             "ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS fundamental_category VARCHAR(20)",
             "ALTER TABLE paper_accounts ADD COLUMN IF NOT EXISTS bonus_balance FLOAT DEFAULT 0.0",
+            # saved_analyses 히스토리 지원
+            "ALTER TABLE saved_analyses ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()",
+            "ALTER TABLE saved_analyses ADD COLUMN IF NOT EXISTS memo TEXT",
+            "UPDATE saved_analyses SET created_at = analyzed_at WHERE created_at IS NULL",
         ]:
             try:
                 await conn.execute(text(stmt))
