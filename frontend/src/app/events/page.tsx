@@ -802,7 +802,7 @@ function UpcomingEventsList({
 // --- Main Page ---
 
 export default function EventsPage() {
-  const { user } = useAuth();
+  const { user, isAuthenticated, isLoading: authLoading } = useAuth();
   const isAdmin = !!user?.is_admin;
   const queryClient = useQueryClient();
   const now = new Date();
@@ -862,6 +862,29 @@ export default function EventsPage() {
     });
     return counts;
   }, [events]);
+
+  if (authLoading) {
+    return <div className="min-h-[40vh]" />;
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div className="space-y-6">
+        <h1 className="text-2xl font-bold">이벤트 캘린더</h1>
+        <div className="flex flex-col items-center justify-center min-h-[40vh] gap-4">
+          <div className="text-6xl">&#x1F512;</div>
+          <h2 className="text-xl font-bold">로그인이 필요합니다</h2>
+          <p className="text-[var(--muted)] text-center">이벤트 캘린더를 이용하려면 로그인하세요.</p>
+          <a
+            href="/auth/login"
+            className="px-6 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
+          >
+            로그인하기
+          </a>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">

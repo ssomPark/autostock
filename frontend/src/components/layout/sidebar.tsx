@@ -10,7 +10,7 @@ const navItems = [
   { href: "/search", label: "종목 분석", icon: "🔍" },
   { href: "/my-analyses", label: "분석 기록", icon: "📋", authOnly: true },
   { href: "/recommendations", label: "투자 추천", icon: "💡" },
-  { href: "/events", label: "이벤트 캘린더", icon: "📅" },
+  { href: "/events", label: "이벤트 캘린더", icon: "📅", authOnly: true },
   { href: "/paper-trading", label: "모의 투자", icon: "💰", authOnly: true },
   { href: "/news", label: "뉴스", icon: "📰" },
   { href: "/pipeline", label: "파이프라인", icon: "⚙️", adminOnly: true },
@@ -78,11 +78,17 @@ export function Sidebar() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
   const { isAuthenticated, user } = useAuth();
-  const visibleNav = navItems.filter((item) => {
-    if ("adminOnly" in item && item.adminOnly) return user?.is_admin;
-    if ("authOnly" in item && item.authOnly) return isAuthenticated;
-    return true;
-  });
+  const visibleNav = navItems
+    .filter((item) => {
+      if ("adminOnly" in item && item.adminOnly) return user?.is_admin;
+      if ("authOnly" in item && item.authOnly) return isAuthenticated;
+      return true;
+    })
+    .map((item) =>
+      item.href === "/" && !isAuthenticated
+        ? { ...item, label: "홈" as const }
+        : item
+    );
 
   return (
     <>
