@@ -8,9 +8,6 @@ import {
   fetchAdminUsers,
   fetchAdminUserDetail,
   fetchAdminPaperTradingStats,
-  fetchAdminAdRewards,
-  fetchAdminAdRewardStats,
-  fetchAdminAdRewardSettings,
   fetchAdminSavedAnalysesStats,
   fetchAdminEvents,
   toggleAdminEventActive,
@@ -20,7 +17,7 @@ import {
   fetchPipelineHistory,
 } from "@/lib/api";
 
-type Tab = "dashboard" | "users" | "analyses" | "paper-trading" | "ad-rewards" | "events" | "pipeline";
+type Tab = "dashboard" | "users" | "analyses" | "paper-trading" | "events" | "pipeline";
 
 function formatNum(n: number) {
   return n.toLocaleString("ko-KR");
@@ -64,12 +61,6 @@ function DashboardTab() {
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
       <SummaryCard icon="👥" title="전체 사용자" value={data.users.total} sub={`오늘 +${data.users.today}`} />
       <SummaryCard icon="📈" title="전체 거래" value={data.trades.total} sub={`오늘 +${data.trades.today}`} />
-      <SummaryCard
-        icon="🎬"
-        title="광고 보상"
-        value={data.ad_rewards.total}
-        sub={`총 ${formatKRW(data.ad_rewards.total_amount)}원`}
-      />
       <SummaryCard
         icon="🔍"
         title="분석 기록"
@@ -213,10 +204,6 @@ function UsersTab() {
                 <div className="flex-1 p-2 bg-white/5 rounded text-center">
                   <p className="text-lg font-bold">{detail.watchlist_count ?? 0}</p>
                   <p className="text-xs text-[var(--muted)]">워치리스트</p>
-                </div>
-                <div className="flex-1 p-2 bg-white/5 rounded text-center">
-                  <p className="text-lg font-bold">{detail.reward_count ?? 0}</p>
-                  <p className="text-xs text-[var(--muted)]">광고 보상</p>
                 </div>
               </div>
               {detail.accounts?.length > 0 && (
@@ -413,165 +400,6 @@ function PaperTradingTab() {
         <SummaryCard icon="👤" title="전체 계좌" value={stats.accounts.total} sub={`활성 ${stats.accounts.active} (${activePct}%)`} />
         <SummaryCard icon="📊" title="전체 거래" value={stats.trades.total} sub={`매수 ${stats.trades.buy} / 매도 ${stats.trades.sell}`} />
         <SummaryCard icon="💰" title="총 거래량" value={`${formatKRW(stats.total_volume)}원`} sub={`평균 ${formatKRW(avgVolume)}원/건`} />
-      </div>
-    </div>
-  );
-}
-
-// ─── Ad Rewards Tab ─────────────────────────────────────────
-function AdRewardsTab() {
-  const [rewardStats, setRewardStats] = useState<any>(null);
-  const [rewardSettings, setRewardSettings] = useState<any>(null);
-  const [logs, setLogs] = useState<any[]>([]);
-  const [logTotal, setLogTotal] = useState(0);
-  const [logPage, setLogPage] = useState(1);
-  const [statusFilter, setStatusFilter] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [logsLoading, setLogsLoading] = useState(false);
-
-  useEffect(() => {
-    Promise.all([
-      fetchAdminAdRewardStats().catch(() => null),
-      fetchAdminAdRewardSettings().catch(() => null),
-    ]).then(([stats, settings]) => {
-      setRewardStats(stats);
-      setRewardSettings(settings);
-    }).finally(() => setLoading(false));
-  }, []);
-
-  const loadLogs = useCallback(async () => {
-    setLogsLoading(true);
-    try {
-      const res = await fetchAdminAdRewards({ status: statusFilter || undefined, page: logPage, size: 20 });
-      setLogs(res.logs);
-      setLogTotal(res.total);
-    } catch { /* ignore */ }
-    setLogsLoading(false);
-  }, [statusFilter, logPage]);
-
-  useEffect(() => { loadLogs(); }, [loadLogs]);
-
-  if (loading) return <LoadingSkeleton />;
-
-  const logTotalPages = Math.ceil(logTotal / 20);
-
-  const statusBadge = (s: string) => {
-    const colors: Record<string, string> = {
-      pending: "bg-yellow-500/20 text-yellow-400",
-      claimed: "bg-green-500/20 text-green-400",
-      expired: "bg-red-500/20 text-red-400",
-    };
-    return colors[s] ?? "bg-gray-500/20 text-gray-400";
-  };
-
-  return (
-    <div className="space-y-6">
-      {/* Stats Cards */}
-      {rewardStats && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <SummaryCard icon="🎯" title="총 청구 건" value={rewardStats.total_claimed} />
-          <SummaryCard icon="💰" title="총 지급 금액" value={`${formatKRW(rewardStats.total_amount)}원`} />
-          <SummaryCard icon="📅" title="오늘 건수" value={rewardStats.today_count} sub={rewardStats.today_amount > 0 ? `${formatKRW(rewardStats.today_amount)}원` : undefined} />
-          <SummaryCard icon="📊" title="평균 금액" value={`${formatNum(rewardStats.avg_amount)}원`} />
-        </div>
-      )}
-
-      {/* Settings */}
-      {rewardSettings && (
-        <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4">
-          <h3 className="font-bold text-sm mb-3">보상 설정</h3>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 text-sm">
-            <div className="bg-white/5 rounded p-2">
-              <p className="text-xs text-[var(--muted)]">쿨다운</p>
-              <p className="font-medium">{rewardSettings.cooldown_seconds}초</p>
-            </div>
-            <div className="bg-white/5 rounded p-2">
-              <p className="text-xs text-[var(--muted)]">최소 금액</p>
-              <p className="font-medium">{formatNum(rewardSettings.min_amount)}원</p>
-            </div>
-            <div className="bg-white/5 rounded p-2">
-              <p className="text-xs text-[var(--muted)]">최대 금액</p>
-              <p className="font-medium">{formatNum(rewardSettings.max_amount)}원</p>
-            </div>
-            <div className="bg-white/5 rounded p-2">
-              <p className="text-xs text-[var(--muted)]">시청 시간</p>
-              <p className="font-medium">{rewardSettings.min_watch_seconds}초</p>
-            </div>
-            <div className="bg-white/5 rounded p-2">
-              <p className="text-xs text-[var(--muted)]">만료 시간</p>
-              <p className="font-medium">{rewardSettings.token_expire_seconds}초</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Log Table */}
-      <div className="space-y-3">
-        <div className="flex items-center gap-2">
-          <h3 className="font-bold text-sm">보상 로그</h3>
-          <div className="flex gap-1 ml-auto">
-            {[
-              { value: "", label: "전체" },
-              { value: "pending", label: "대기" },
-              { value: "claimed", label: "청구" },
-              { value: "expired", label: "만료" },
-            ].map((f) => (
-              <button
-                key={f.value}
-                onClick={() => { setStatusFilter(f.value); setLogPage(1); }}
-                className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
-                  statusFilter === f.value ? "bg-blue-600 text-white" : "bg-white/5 text-[var(--muted)] hover:bg-white/10"
-                }`}
-              >
-                {f.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {logsLoading ? <LoadingSkeleton /> : (
-          <>
-            <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg overflow-hidden">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-[var(--card-border)] text-left text-[var(--muted)]">
-                    <th className="px-4 py-3 font-medium">ID</th>
-                    <th className="px-4 py-3 font-medium">사용자 ID</th>
-                    <th className="px-4 py-3 font-medium">금액</th>
-                    <th className="px-4 py-3 font-medium">상태</th>
-                    <th className="px-4 py-3 font-medium hidden sm:table-cell">생성일</th>
-                    <th className="px-4 py-3 font-medium hidden md:table-cell">청구일</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {logs.map((log) => (
-                    <tr key={log.id} className="border-b border-[var(--card-border)] last:border-0 hover:bg-white/5">
-                      <td className="px-4 py-3">{log.id}</td>
-                      <td className="px-4 py-3">{log.user_id}</td>
-                      <td className="px-4 py-3 font-medium">{formatNum(log.reward_amount)}원</td>
-                      <td className="px-4 py-3">
-                        <span className={`px-2 py-0.5 rounded text-xs font-medium ${statusBadge(log.status)}`}>{log.status}</span>
-                      </td>
-                      <td className="px-4 py-3 hidden sm:table-cell text-[var(--muted)]">{log.created_at?.split("T")[0]}</td>
-                      <td className="px-4 py-3 hidden md:table-cell text-[var(--muted)]">{log.claimed_at?.split("T")[0] ?? "-"}</td>
-                    </tr>
-                  ))}
-                  {logs.length === 0 && (
-                    <tr><td colSpan={6} className="px-4 py-8 text-center text-[var(--muted)]">로그 없음</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-
-            {logTotalPages > 1 && (
-              <div className="flex items-center justify-center gap-2">
-                <button onClick={() => setLogPage((p) => Math.max(1, p - 1))} disabled={logPage <= 1} className="px-3 py-1.5 rounded bg-white/5 text-sm disabled:opacity-30">이전</button>
-                <span className="text-sm text-[var(--muted)]">{logPage} / {logTotalPages}</span>
-                <button onClick={() => setLogPage((p) => Math.min(logTotalPages, p + 1))} disabled={logPage >= logTotalPages} className="px-3 py-1.5 rounded bg-white/5 text-sm disabled:opacity-30">다음</button>
-              </div>
-            )}
-          </>
-        )}
       </div>
     </div>
   );
@@ -1111,7 +939,6 @@ export default function AdminPage() {
     { key: "users", label: "사용자" },
     { key: "analyses", label: "분석 기록" },
     { key: "paper-trading", label: "모의 투자" },
-    { key: "ad-rewards", label: "광고 보상" },
     { key: "events", label: "이벤트" },
     { key: "pipeline", label: "파이프라인" },
   ];
@@ -1145,7 +972,6 @@ export default function AdminPage() {
       {tab === "users" && <UsersTab />}
       {tab === "analyses" && <AnalysesTab />}
       {tab === "paper-trading" && <PaperTradingTab />}
-      {tab === "ad-rewards" && <AdRewardsTab />}
       {tab === "events" && <EventsTab />}
       {tab === "pipeline" && <PipelineTab />}
     </div>
