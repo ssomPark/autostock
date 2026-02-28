@@ -709,7 +709,7 @@ async def get_leaderboard(
     for i, e in enumerate(entries):
         e["rank"] = i + 1
 
-    cached = {"entries": entries, "updated_at": datetime.utcnow().isoformat()}
+    cached = {"entries": entries, "updated_at": datetime.now().isoformat()}
     _leaderboard_cache = cached
     _leaderboard_cache_time = now
 

@@ -37,6 +37,7 @@ services:
     ports:
       - "8000:8000"
     environment:
+      TZ: Asia/Seoul
       DATABASE_URL: postgresql+asyncpg://traderadar:traderadar@postgres:5432/traderadar
       DATABASE_URL_SYNC: postgresql://traderadar:traderadar@postgres:5432/traderadar
       REDIS_URL: redis://redis:6379/0
