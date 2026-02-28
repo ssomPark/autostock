@@ -10,7 +10,7 @@ import httpx
 import numpy as np
 import pandas as pd
 import yfinance as yf
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 
 from src.analysis.candlestick_patterns import CandlestickDetector
@@ -18,12 +18,55 @@ from src.analysis.chart_patterns import ChartPatternDetector
 from src.analysis.scoring_engine import ScoringEngine
 from src.analysis.support_resistance import SupportResistanceDetector
 from src.analysis.volume_analysis import VolumeAnalyzer
+from src.auth.dependencies import get_current_user_optional
+from src.config.settings import settings
+from src.models.db_models import UserModel
 from src.services.market_data_service import MarketDataService
+from src.utils.rate_limiter import check_analysis_limit
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
 market_service = MarketDataService()
+
+
+def _get_client_ip(request: Request) -> str:
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+async def _check_rate_limit(request: Request, user: UserModel | None, ticker: str):
+    """Check rate limit for anonymous users. Returns (headers, error_response).
+    If error_response is not None, the request should be rejected.
+    Tracks unique tickers per IP — same ticker doesn't count twice.
+    """
+    if user is not None:
+        return {}, None  # Logged-in users have no limit
+
+    ip = _get_client_ip(request)
+    allowed, remaining, reset_seconds = await check_analysis_limit(ip, ticker)
+    headers = {
+        "X-RateLimit-Remaining": str(remaining),
+        "X-RateLimit-Limit": str(settings.analysis_rate_limit),
+        "X-RateLimit-Reset": str(reset_seconds),
+    }
+
+    if not allowed:
+        return headers, JSONResponse(
+            status_code=429,
+            content={
+                "success": False,
+                "message": "일일 무료 분석 횟수를 초과했습니다. 로그인하면 무제한 분석이 가능합니다.",
+                "limit": settings.analysis_rate_limit,
+                "remaining": 0,
+                "reset_seconds": reset_seconds,
+            },
+            headers=headers,
+        )
+
+    return headers, None
 
 
 @router.get("/search")
@@ -87,9 +130,15 @@ def _kr_ticker_to_yf(ticker: str, market: str) -> str:
 @router.get("/{ticker}/financials")
 async def get_financials(
     ticker: str,
+    request: Request,
     market: str = Query("KOSPI", description="Market: KOSPI, KOSDAQ, NYSE, NASDAQ"),
+    user: UserModel | None = Depends(get_current_user_optional),
 ):
     """Get financial data for a ticker using yfinance."""
+    rl_headers, rl_error = await _check_rate_limit(request, user, ticker)
+    if rl_error is not None:
+        return rl_error
+
     try:
         yf_ticker = _kr_ticker_to_yf(ticker, market)
         t = yf.Ticker(yf_ticker)
@@ -158,7 +207,7 @@ async def get_financials(
             "fiscal_years": fiscal_years,
         }
 
-        return {"success": True, "data": _sanitize(result)}
+        return JSONResponse(content={"success": True, "data": _sanitize(result)}, headers=rl_headers)
 
     except Exception as e:
         logger.error(f"Failed to fetch financials for {ticker}: {e}")
@@ -168,9 +217,15 @@ async def get_financials(
 @router.get("/{ticker}/score")
 async def get_score(
     ticker: str,
+    request: Request,
     market: str = Query("KOSPI", description="Market: KOSPI, KOSDAQ, NYSE, NASDAQ"),
+    user: UserModel | None = Depends(get_current_user_optional),
 ):
     """Get comprehensive scoring with enhanced confidence, targets, and risk/reward."""
+    rl_headers, rl_error = await _check_rate_limit(request, user, ticker)
+    if rl_error is not None:
+        return rl_error
+
     try:
         df = _get_ohlcv_with_fallback(ticker, market)
         if df.empty:
@@ -179,7 +234,7 @@ async def get_score(
         # Fetch fundamental data for confidence adjustment
         fundamentals = _get_fundamentals(ticker, market)
         result = _sanitize(ScoringEngine(df, fundamentals=fundamentals).compute())
-        return {"success": True, "data": result}
+        return JSONResponse(content={"success": True, "data": result}, headers=rl_headers)
     except Exception as e:
         logger.error(f"Scoring failed for {ticker}: {e}")
         return {"success": False, "message": str(e)}
@@ -225,9 +280,15 @@ def _get_ohlcv_with_fallback(ticker: str, market: str) -> pd.DataFrame:
 @router.get("/{ticker}")
 async def get_full_analysis(
     ticker: str,
+    request: Request,
     market: str = Query("KOSPI", description="Market: KOSPI, KOSDAQ, NYSE, NASDAQ"),
+    user: UserModel | None = Depends(get_current_user_optional),
 ):
     """Run full technical analysis for a ticker."""
+    rl_headers, rl_error = await _check_rate_limit(request, user, ticker)
+    if rl_error is not None:
+        return rl_error
+
     df = _get_ohlcv_with_fallback(ticker, market)
     if df.empty:
         return {"success": False, "message": f"No data available for {ticker}"}
@@ -241,26 +302,35 @@ async def get_full_analysis(
     fundamentals = _get_fundamentals(ticker, market)
     name = fundamentals.get("shortName") or ticker
 
-    return {
-        "success": True,
-        "data": {
-            "ticker": ticker,
-            "name": name,
-            "market": market,
-            "candlestick": candlestick,
-            "chart_pattern": chart_pattern,
-            "support_resistance": sr,
-            "volume": volume,
+    return JSONResponse(
+        content={
+            "success": True,
+            "data": {
+                "ticker": ticker,
+                "name": name,
+                "market": market,
+                "candlestick": candlestick,
+                "chart_pattern": chart_pattern,
+                "support_resistance": sr,
+                "volume": volume,
+            },
         },
-    }
+        headers=rl_headers,
+    )
 
 
 @router.get("/{ticker}/ohlcv")
 async def get_ohlcv(
     ticker: str,
+    request: Request,
     market: str = Query("KOSPI"),
+    user: UserModel | None = Depends(get_current_user_optional),
 ):
     """Get raw OHLCV data for charting."""
+    rl_headers, rl_error = await _check_rate_limit(request, user, ticker)
+    if rl_error is not None:
+        return rl_error
+
     df = _get_ohlcv_with_fallback(ticker, market)
     if df.empty:
         return {"success": False, "message": "No data", "data": []}
@@ -282,7 +352,7 @@ async def get_ohlcv(
         })
 
     records.sort(key=lambda x: x["time"])
-    return {"success": True, "data": records}
+    return JSONResponse(content={"success": True, "data": records}, headers=rl_headers)
 
 
 @router.get("/{ticker}/candlestick")

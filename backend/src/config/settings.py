@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     n8n_webhook_url: str = "http://n8n_live:5678/webhook/autostock-pipeline"
     n8n_backend_url: str = "http://traderadar-backend:8000"
 
+    # Rate Limiting
+    analysis_rate_limit: int = 5  # daily limit for anonymous users
+
     # Ad Reward
     ad_reward_cooldown_seconds: int = 3600       # 1시간
     ad_reward_min_amount: int = 500_000          # 50만원

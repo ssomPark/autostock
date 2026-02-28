@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useRouter } from "next/navigation";
 import { fetchNews } from "@/lib/api";
+import { AdUnit } from "@/components/ads/ad-unit";
 
 type SentimentFilter = "all" | "positive" | "negative";
 
@@ -69,8 +70,9 @@ export default function NewsPage() {
           {filtered.map((article: any, i: number) => {
             const cfg = SENTIMENT_CONFIG[article.sentiment as keyof typeof SENTIMENT_CONFIG] ?? SENTIMENT_CONFIG.neutral;
             return (
+              <div key={i}>
+              {i === 5 && <AdUnit slot="news-infeed" format="fluid" className="mb-3" />}
               <div
-                key={i}
                 className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4 hover:border-[var(--accent)] transition-colors"
               >
                 <div className="flex items-start gap-2 mb-1">
@@ -108,6 +110,7 @@ export default function NewsPage() {
                   <span>{article.source}</span>
                   {article.published_at && <span>{article.published_at}</span>}
                 </div>
+              </div>
               </div>
             );
           })}

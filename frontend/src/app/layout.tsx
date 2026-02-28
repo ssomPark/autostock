@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Script from "next/script";
 import "./globals.css";
 import { Sidebar } from "@/components/layout/sidebar";
 import { QueryProvider } from "@/lib/query-provider";
@@ -9,6 +10,8 @@ export const metadata: Metadata = {
   description: "Multi-Agent Stock Analysis System",
 };
 
+const adsenseClient = process.env.NEXT_PUBLIC_ADSENSE_CLIENT;
+
 export default function RootLayout({
   children,
 }: {
@@ -17,6 +20,13 @@ export default function RootLayout({
   return (
     <html lang="ko">
       <body>
+        {adsenseClient && (
+          <Script
+            src={`https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${adsenseClient}`}
+            strategy="afterInteractive"
+            crossOrigin="anonymous"
+          />
+        )}
         <QueryProvider>
           <AuthProvider>
             <div className="flex flex-col lg:flex-row h-screen">

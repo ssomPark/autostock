@@ -10,6 +10,7 @@ import { SparklineChart } from "@/components/charts/sparkline-chart";
 import { useLivePrices } from "@/hooks/use-live-prices";
 import { OrderModal } from "@/components/paper-trading/order-modal";
 import { formatPrice } from "@/lib/format";
+import { AdUnit } from "@/components/ads/ad-unit";
 
 function MarketStatusDot({ isOpen, label, holiday }: { isOpen: boolean; label: string; holiday?: boolean }) {
   const statusText = holiday ? "휴장" : isOpen ? "개장" : "마감";
@@ -253,13 +254,15 @@ export default function RecommendationsPage() {
               </div>
             )}
             {data?.data?.map((rec: any, i: number) => {
+              const showAd = i === 3;
               const lp = prices.get(rec.ticker);
               const expectedPct = rec.current_price > 0 && rec.target_price
                 ? ((rec.target_price - rec.current_price) / rec.current_price * 100)
                 : null;
               return (
+                <Fragment key={i}>
+                {showAd && <AdUnit slot="rec-infeed" format="fluid" />}
                 <div
-                  key={i}
                   className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4"
                 >
                   <div className="flex items-center justify-between mb-3">
@@ -393,6 +396,7 @@ export default function RecommendationsPage() {
                     </div>
                   )}
                 </div>
+                </Fragment>
               );
             })}
           </div>

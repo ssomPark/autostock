@@ -3,11 +3,12 @@
 import { useState, useEffect, useRef, useCallback, Suspense } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
-import { fetchFinancials, fetchScore, saveAnalysisAPI, searchStocks, type StockSearchResult } from "@/lib/api";
+import { fetchFinancials, fetchScore, saveAnalysisAPI, searchStocks, getAnalysisRemaining, getAnalysisResetSeconds, RateLimitError, type StockSearchResult } from "@/lib/api";
 import { CandlestickChart } from "@/components/charts/candlestick-chart";
 import { addToWatchlist, isInWatchlist } from "@/lib/watchlist";
 import { useAuth } from "@/lib/auth-context";
 import { formatPrice } from "@/lib/format";
+import { AdUnit } from "@/components/ads/ad-unit";
 
 function detectMarket(ticker: string): string {
   return /^\d{6}$/.test(ticker.trim()) ? "KOSPI" : "NASDAQ";
@@ -79,14 +80,84 @@ export default function SearchPageWrapper() {
   );
 }
 
+function formatResetTime(seconds: number): string {
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (h > 0) return `${h}시간 ${m}분`;
+  if (m > 0) return `${m}분`;
+  return "1분 이내";
+}
+
+function ResetCountdown({ initialSeconds }: { initialSeconds: number }) {
+  const [timeLeft, setTimeLeft] = useState(initialSeconds);
+
+  useEffect(() => {
+    setTimeLeft(initialSeconds);
+  }, [initialSeconds]);
+
+  useEffect(() => {
+    if (timeLeft <= 0) return;
+    const timer = setInterval(() => setTimeLeft((t) => Math.max(0, t - 1)), 1000);
+    return () => clearInterval(timer);
+  }, [timeLeft > 0]);
+
+  return (
+    <span className="text-amber-400 text-xs font-medium">
+      {formatResetTime(timeLeft)} 후 충전 · <span className="text-[var(--muted)]">로그인하면 무제한</span>
+    </span>
+  );
+}
+
+function RateLimitBanner({ onLogin, resetSeconds }: { onLogin: () => void; resetSeconds: number | null }) {
+  const [timeLeft, setTimeLeft] = useState(resetSeconds ?? 0);
+
+  useEffect(() => {
+    if (resetSeconds != null) setTimeLeft(resetSeconds);
+  }, [resetSeconds]);
+
+  useEffect(() => {
+    if (timeLeft <= 0) return;
+    const timer = setInterval(() => setTimeLeft((t) => Math.max(0, t - 1)), 1000);
+    return () => clearInterval(timer);
+  }, [timeLeft > 0]);
+
+  return (
+    <div className="bg-[var(--card)] border border-amber-500/30 rounded-lg p-6 text-center space-y-3">
+      <div className="text-amber-400 text-3xl">
+        <svg xmlns="http://www.w3.org/2000/svg" className="w-10 h-10 mx-auto" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+        </svg>
+      </div>
+      <h3 className="text-lg font-semibold">무료 분석 횟수를 모두 사용했습니다</h3>
+      {timeLeft > 0 && (
+        <p className="text-sm text-amber-400 font-medium">
+          {formatResetTime(timeLeft)} 후 충전
+        </p>
+      )}
+      <p className="text-sm text-[var(--muted)]">
+        로그인하면 무제한 분석이 가능합니다.
+      </p>
+      <button
+        onClick={onLogin}
+        className="px-6 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
+      >
+        Google로 로그인
+      </button>
+    </div>
+  );
+}
+
 function SearchPage() {
   const searchParams = useSearchParams();
   const queryClient = useQueryClient();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, login } = useAuth();
   const [input, setInput] = useState("");
   const [ticker, setTicker] = useState("");
   const [market, setMarket] = useState("NASDAQ");
   const [saved, setSaved] = useState(false);
+  const [rateLimited, setRateLimited] = useState(false);
+  const [remaining, setRemaining] = useState<number | null>(null);
+  const [resetSeconds, setResetSeconds] = useState<number | null>(null);
 
   // Autocomplete state
   const [suggestions, setSuggestions] = useState<StockSearchResult[]>([]);
@@ -161,6 +232,7 @@ function SearchPage() {
     setTicker(item.ticker);
     setMarket(item.market);
     setSaved(false);
+    setRateLimited(false);
     isInWatchlist(item.ticker).then(setSaved);
   }, []);
 
@@ -203,14 +275,31 @@ function SearchPage() {
   const financials = useQuery({
     queryKey: ["financials", ticker, market],
     queryFn: () => fetchFinancials(ticker, market),
-    enabled: !!ticker,
+    enabled: !!ticker && !rateLimited,
+    retry: (count, error) => !(error instanceof RateLimitError) && count < 2,
   });
 
   const score = useQuery({
     queryKey: ["score", ticker, market],
     queryFn: () => fetchScore(ticker, market),
-    enabled: !!ticker,
+    enabled: !!ticker && !rateLimited,
+    retry: (count, error) => !(error instanceof RateLimitError) && count < 2,
   });
+
+  // Track rate limit errors
+  useEffect(() => {
+    const err = financials.error || score.error;
+    if (err instanceof RateLimitError) {
+      setRateLimited(true);
+      setRemaining(0);
+      setResetSeconds(err.resetSeconds);
+    } else {
+      const r = getAnalysisRemaining();
+      if (r !== null) setRemaining(r);
+      const rs = getAnalysisResetSeconds();
+      if (rs !== null) setResetSeconds(rs);
+    }
+  }, [financials.error, score.error, financials.data, score.data]);
 
   const fin = financials.data?.data;
   const sc = score.data?.data;
@@ -293,18 +382,39 @@ function SearchPage() {
         )}
       </div>
 
-      {!ticker && (
+      {/* Rate limit badge for anonymous users */}
+      {!isAuthenticated && remaining !== null && !rateLimited && (
+        <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
+          <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${
+            remaining === 0 ? "bg-amber-500/15 text-amber-400" : "bg-blue-600/15 text-blue-400"
+          }`}>
+            오늘 {remaining}/5회 남음
+          </span>
+          {remaining === 0 && resetSeconds != null && resetSeconds > 0 ? (
+            <ResetCountdown initialSeconds={resetSeconds} />
+          ) : (
+            <span>로그인하면 무제한 분석</span>
+          )}
+        </div>
+      )}
+
+      {/* Rate limit exceeded — login prompt */}
+      {rateLimited && (
+        <RateLimitBanner onLogin={() => login("google")} resetSeconds={resetSeconds} />
+      )}
+
+      {!ticker && !rateLimited && (
         <div className="text-center py-20 text-[var(--muted)]">
           <p className="text-lg">종목명 또는 코드를 입력하고 분석을 시작하세요</p>
           <p className="text-sm mt-2">종목명 검색 (예: 한화, apple) | 숫자 6자리 → 한국 주식 | 알파벳 코드 → 미국 주식</p>
         </div>
       )}
 
-      {ticker && isLoading && (
+      {ticker && !rateLimited && isLoading && (
         <div className="text-center py-20 text-[var(--muted)]">분석 중...</div>
       )}
 
-      {ticker && !isLoading && (
+      {ticker && !rateLimited && !isLoading && (
         <>
           {/* ====== Overall Verdict ====== */}
           {sc && (
@@ -796,6 +906,9 @@ function SearchPage() {
               </div>
             </div>
           )}
+
+          {/* AdSense ad below analysis results — anonymous only */}
+          <AdUnit slot="search-bottom" className="mt-6" />
         </>
       )}
     </div>

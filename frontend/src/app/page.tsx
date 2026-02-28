@@ -8,6 +8,7 @@ import { RecentNews } from "@/components/dashboard/recent-news";
 import { PipelineStatus } from "@/components/dashboard/pipeline-status";
 import { Watchlist } from "@/components/dashboard/watchlist";
 import { fetchDashboardSummary } from "@/lib/api";
+import { AdUnit } from "@/components/ads/ad-unit";
 
 export default function DashboardPage() {
   const { data } = useQuery({
@@ -35,6 +36,7 @@ export default function DashboardPage() {
           <RecentNews />
         </div>
       </div>
+      <AdUnit slot="dashboard-bottom" className="mt-6" />
     </div>
   );
 }

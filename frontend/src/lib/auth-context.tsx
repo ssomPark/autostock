@@ -65,6 +65,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(async () => {
     await logoutAPI();
     setUser(null);
+    localStorage.removeItem("tr_has_session");
   }, []);
 
   const setToken = useCallback(async (token: string) => {
@@ -72,6 +73,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const me = await fetchMe();
       setUser(me);
+      localStorage.setItem("tr_has_session", "1");
       // Migrate localStorage watchlist to server
       await migrateLocalToServer();
     } catch {

@@ -15,13 +15,62 @@ export function getAccessToken(): string | null {
   return _accessToken;
 }
 
+// --- Rate limit tracking ---
+
+let _analysisRemaining: number | null = null;
+let _analysisResetSeconds: number | null = null;
+
+export function getAnalysisRemaining(): number | null {
+  return _analysisRemaining;
+}
+
+export function getAnalysisResetSeconds(): number | null {
+  return _analysisResetSeconds;
+}
+
+export class RateLimitError extends Error {
+  limit: number;
+  remaining: number;
+  resetSeconds: number;
+  constructor(limit: number, remaining: number, resetSeconds: number) {
+    super("일일 무료 분석 횟수를 초과했습니다.");
+    this.name = "RateLimitError";
+    this.limit = limit;
+    this.remaining = remaining;
+    this.resetSeconds = resetSeconds;
+  }
+}
+
 // --- Base fetch helpers ---
 
 async function fetchJSON(url: string, options?: RequestInit) {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (_accessToken) {
+    headers["Authorization"] = `Bearer ${_accessToken}`;
+  }
   const res = await fetch(`${API_BASE}${url}`, {
-    headers: { "Content-Type": "application/json" },
+    headers,
     ...options,
   });
+
+  // Track rate limit from analysis endpoints
+  const remaining = res.headers.get("X-RateLimit-Remaining");
+  const resetSec = res.headers.get("X-RateLimit-Reset");
+  if (remaining !== null) {
+    _analysisRemaining = parseInt(remaining, 10);
+  }
+  if (resetSec !== null) {
+    _analysisResetSeconds = parseInt(resetSec, 10);
+  }
+
+  if (res.status === 429) {
+    const limit = parseInt(res.headers.get("X-RateLimit-Limit") || "5", 10);
+    const reset = parseInt(resetSec || "86400", 10);
+    _analysisRemaining = 0;
+    _analysisResetSeconds = reset;
+    throw new RateLimitError(limit, 0, reset);
+  }
+
   if (!res.ok) throw new Error(`API Error: ${res.status}`);
   return res.json();
 }
@@ -63,14 +112,23 @@ async function fetchWithAuth(url: string, options?: RequestInit) {
 
 export async function refreshAccessToken(): Promise<boolean> {
   try {
+    // Skip if user never logged in before (avoids 401 console noise for anonymous users)
+    if (typeof localStorage !== "undefined" && !localStorage.getItem("tr_has_session")) {
+      return false;
+    }
     const res = await fetch(`${BACKEND_URL}/api/auth/refresh`, {
       method: "POST",
       credentials: "include",
     });
-    if (!res.ok) return false;
+    if (!res.ok) {
+      // Session expired — clear the flag
+      if (typeof localStorage !== "undefined") localStorage.removeItem("tr_has_session");
+      return false;
+    }
     const data = await res.json();
     if (data.access_token) {
       _accessToken = data.access_token;
+      if (typeof localStorage !== "undefined") localStorage.setItem("tr_has_session", "1");
       return true;
     }
     return false;
