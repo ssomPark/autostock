@@ -31,6 +31,9 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 market_service = MarketDataService()
 
+# Limit concurrent external API calls (yfinance, KIS) to prevent overwhelming upstream services
+_api_semaphore = asyncio.Semaphore(10)
+
 
 def _get_client_ip(request: Request) -> str:
     forwarded = request.headers.get("X-Forwarded-For", "")
@@ -148,7 +151,8 @@ async def get_financials(
         return JSONResponse(content={"success": True, "data": cached}, headers=rl_headers)
 
     try:
-        result = await asyncio.to_thread(_fetch_financials_sync, ticker, market)
+        async with _api_semaphore:
+            result = await asyncio.to_thread(_fetch_financials_sync, ticker, market)
         sanitized = _sanitize(result)
         await cache_set_json(cache_key, sanitized, ttl=3600)
         return JSONResponse(content={"success": True, "data": sanitized}, headers=rl_headers)
@@ -247,12 +251,11 @@ async def get_score(
         return JSONResponse(content={"success": True, "data": cached}, headers=rl_headers)
 
     try:
-        df = await asyncio.to_thread(_get_ohlcv_with_fallback, ticker, market)
-        if df.empty:
-            return {"success": False, "message": f"No data available for {ticker}"}
-
-        # Fetch fundamental data for confidence adjustment
-        fundamentals = await asyncio.to_thread(_get_fundamentals, ticker, market)
+        async with _api_semaphore:
+            df = await asyncio.to_thread(_get_ohlcv_with_fallback, ticker, market)
+            if df.empty:
+                return {"success": False, "message": f"No data available for {ticker}"}
+            fundamentals = await asyncio.to_thread(_get_fundamentals, ticker, market)
         result = _sanitize(ScoringEngine(df, fundamentals=fundamentals).compute())
         await cache_set_json(cache_key, result, ttl=600)
         return JSONResponse(content={"success": True, "data": result}, headers=rl_headers)
@@ -310,17 +313,16 @@ async def get_full_analysis(
     if rl_error is not None:
         return rl_error
 
-    df = await asyncio.to_thread(_get_ohlcv_with_fallback, ticker, market)
-    if df.empty:
-        return {"success": False, "message": f"No data available for {ticker}"}
+    async with _api_semaphore:
+        df = await asyncio.to_thread(_get_ohlcv_with_fallback, ticker, market)
+        if df.empty:
+            return {"success": False, "message": f"No data available for {ticker}"}
+        fundamentals = await asyncio.to_thread(_get_fundamentals, ticker, market)
 
     candlestick = _sanitize(CandlestickDetector(df).get_signal())
     chart_pattern = _sanitize(ChartPatternDetector(df).get_signal())
     sr = _sanitize(SupportResistanceDetector(df).get_signal())
     volume = _sanitize(VolumeAnalyzer(df).get_signal())
-
-    # Fetch company name
-    fundamentals = await asyncio.to_thread(_get_fundamentals, ticker, market)
     name = fundamentals.get("shortName") or ticker
 
     return JSONResponse(
@@ -358,7 +360,8 @@ async def get_ohlcv(
     if cached is not None:
         return JSONResponse(content={"success": True, "data": cached}, headers=rl_headers)
 
-    df = await asyncio.to_thread(_get_ohlcv_with_fallback, ticker, market)
+    async with _api_semaphore:
+        df = await asyncio.to_thread(_get_ohlcv_with_fallback, ticker, market)
     if df.empty:
         return {"success": False, "message": "No data", "data": []}
 

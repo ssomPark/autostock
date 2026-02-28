@@ -9,6 +9,7 @@ Crawls Korean financial news from:
 from __future__ import annotations
 
 import json
+import time
 
 from crewai.tools import BaseTool
 from pydantic import Field
@@ -32,7 +33,9 @@ class NewsCrawlerTool(BaseTool):
     def _run(self, category: str = "economy") -> str:
         articles = []
         articles.extend(self._crawl_naver_finance(category))
+        time.sleep(1.5)  # Throttle between crawl targets
         articles.extend(self._crawl_maeil(category))
+        time.sleep(1.5)
         articles.extend(self._crawl_hankyung(category))
         return json.dumps(articles, ensure_ascii=False)
 
