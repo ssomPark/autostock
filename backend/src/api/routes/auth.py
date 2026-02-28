@@ -117,12 +117,14 @@ async def refresh(
 
 @router.get("/me")
 async def me(user: UserModel = Depends(get_current_user)):
+    admin_list = [e.strip().lower() for e in settings.admin_emails.split(",") if e.strip()]
     return {
         "id": user.id,
         "email": user.email,
         "name": user.name,
         "avatar_url": user.avatar_url,
         "provider": user.provider,
+        "is_admin": user.email.lower() in admin_list,
     }
 
 

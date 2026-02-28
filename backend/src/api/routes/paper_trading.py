@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import time
-from datetime import datetime
+import uuid
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -14,12 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.auth.dependencies import get_current_user, get_current_user_optional
+from src.config.settings import settings
 from src.db.database import get_async_session
 from src.models.db_models import (
     UserModel,
     PaperAccountModel,
     PaperPositionModel,
     PaperTradeModel,
+    AdRewardLogModel,
 )
 from src.services.market_data_service import MarketDataService, get_usd_krw_rate
 from src.utils.stock_name_resolver import resolve_kr_name
@@ -57,6 +61,20 @@ class SellOrderIn(BaseModel):
     ticker: str
     quantity: int
     price: float
+
+
+class AdRewardRequestIn(BaseModel):
+    account_id: int
+
+
+class AdRewardClaimIn(BaseModel):
+    reward_token: str
+    account_id: int
+
+
+class DepositIn(BaseModel):
+    account_id: int
+    amount: int  # KRW 단위
 
 
 # --- Helpers ---
@@ -224,6 +242,7 @@ async def reset_account(
         delete(PaperTradeModel).where(PaperTradeModel.account_id == account_id)
     )
     account.cash_balance = account.initial_balance
+    account.bonus_balance = 0.0
     account.updated_at = datetime.now()
     await session.commit()
     return {"ok": True, "cash_balance": account.cash_balance}
@@ -568,10 +587,11 @@ async def get_summary(
         total_eval = sum(evals)
 
     total_assets = account.cash_balance + total_eval
-    total_pnl = total_assets - account.initial_balance
+    effective_capital = account.initial_balance + getattr(account, 'bonus_balance', 0)
+    total_pnl = total_assets - effective_capital
     total_pnl_pct = (
-        (total_pnl / account.initial_balance * 100)
-        if account.initial_balance > 0
+        (total_pnl / effective_capital * 100)
+        if effective_capital > 0
         else 0.0
     )
 
@@ -589,6 +609,7 @@ async def get_summary(
         "account_id": account_id,
         "name": account.name,
         "initial_balance": account.initial_balance,
+        "bonus_balance": getattr(account, 'bonus_balance', 0) or 0,
         "cash_balance": account.cash_balance,
         "total_invested": total_invested,
         "total_eval": total_eval,
@@ -654,10 +675,11 @@ async def get_leaderboard(
             else:
                 total_eval += current_price * pos.quantity
 
-        total_pnl = total_eval - account.initial_balance
+        effective_capital = account.initial_balance + getattr(account, 'bonus_balance', 0)
+        total_pnl = total_eval - effective_capital
         return_pct = (
-            (total_pnl / account.initial_balance * 100)
-            if account.initial_balance > 0
+            (total_pnl / effective_capital * 100)
+            if effective_capital > 0
             else 0
         )
 
@@ -692,3 +714,243 @@ async def get_leaderboard(
     _leaderboard_cache_time = now
 
     return {**cached, "current_user_id": user.id if user else None}
+
+
+# --- Ad Reward ---
+
+@router.get("/ad-reward/status")
+async def get_ad_reward_status(
+    account_id: int = Query(...),
+    user: UserModel = Depends(get_current_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """광고 보상 쿨다운 상태 조회."""
+    await _verify_account_owner(account_id, user, session)
+
+    cooldown_sec = settings.ad_reward_cooldown_seconds
+    now = datetime.now()
+
+    # 마지막 claimed 기록
+    result = await session.execute(
+        select(AdRewardLogModel)
+        .where(
+            AdRewardLogModel.user_id == user.id,
+            AdRewardLogModel.status == "claimed",
+        )
+        .order_by(AdRewardLogModel.claimed_at.desc())
+        .limit(1)
+    )
+    last_claimed = result.scalar_one_or_none()
+
+    can_watch = True
+    cooldown_remaining = 0
+    next_available_at = None
+
+    if last_claimed and last_claimed.claimed_at:
+        elapsed = (now - last_claimed.claimed_at).total_seconds()
+        if elapsed < cooldown_sec:
+            can_watch = False
+            cooldown_remaining = int(cooldown_sec - elapsed)
+            next_available_at = (last_claimed.claimed_at + timedelta(seconds=cooldown_sec)).isoformat()
+
+    # 총 누적 보상
+    total_result = await session.execute(
+        select(func.coalesce(func.sum(AdRewardLogModel.reward_amount), 0)).where(
+            AdRewardLogModel.user_id == user.id,
+            AdRewardLogModel.status == "claimed",
+        )
+    )
+    total_earned = total_result.scalar() or 0
+
+    # 오늘 보상 횟수
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_result = await session.execute(
+        select(func.count(AdRewardLogModel.id)).where(
+            AdRewardLogModel.user_id == user.id,
+            AdRewardLogModel.status == "claimed",
+            AdRewardLogModel.claimed_at >= today_start,
+        )
+    )
+    today_count = today_result.scalar() or 0
+
+    return {
+        "can_watch": can_watch,
+        "cooldown_remaining": cooldown_remaining,
+        "next_available_at": next_available_at,
+        "total_earned": total_earned,
+        "today_count": today_count,
+    }
+
+
+@router.post("/ad-reward/request")
+async def request_ad_reward(
+    body: AdRewardRequestIn,
+    user: UserModel = Depends(get_current_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """광고 시청 전 토큰 발급."""
+    await _verify_account_owner(body.account_id, user, session)
+
+    cooldown_sec = settings.ad_reward_cooldown_seconds
+    now = datetime.now()
+
+    # 쿨다운 체크
+    result = await session.execute(
+        select(AdRewardLogModel)
+        .where(
+            AdRewardLogModel.user_id == user.id,
+            AdRewardLogModel.status == "claimed",
+        )
+        .order_by(AdRewardLogModel.claimed_at.desc())
+        .limit(1)
+    )
+    last_claimed = result.scalar_one_or_none()
+
+    if last_claimed and last_claimed.claimed_at:
+        elapsed = (now - last_claimed.claimed_at).total_seconds()
+        if elapsed < cooldown_sec:
+            remaining = int(cooldown_sec - elapsed)
+            return {
+                "reward_token": None,
+                "can_watch": False,
+                "cooldown_remaining": remaining,
+            }
+
+    # 기존 pending 토큰 만료 처리
+    pending_result = await session.execute(
+        select(AdRewardLogModel).where(
+            AdRewardLogModel.user_id == user.id,
+            AdRewardLogModel.status == "pending",
+        )
+    )
+    for old_log in pending_result.scalars().all():
+        old_log.status = "expired"
+
+    # 새 토큰 생성
+    token = str(uuid.uuid4())
+    log = AdRewardLogModel(
+        account_id=body.account_id,
+        user_id=user.id,
+        reward_token=token,
+        status="pending",
+    )
+    session.add(log)
+    await session.commit()
+
+    return {
+        "reward_token": token,
+        "can_watch": True,
+        "cooldown_remaining": 0,
+    }
+
+
+@router.post("/ad-reward/claim")
+async def claim_ad_reward(
+    body: AdRewardClaimIn,
+    user: UserModel = Depends(get_current_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """광고 시청 후 보상 지급."""
+    now = datetime.now()
+    token_expire_sec = settings.ad_reward_token_expire_seconds
+    min_watch_sec = settings.ad_reward_min_watch_seconds
+    cooldown_sec = settings.ad_reward_cooldown_seconds
+
+    # 1. 토큰 조회 (status=pending, 10분 이내)
+    result = await session.execute(
+        select(AdRewardLogModel).where(
+            AdRewardLogModel.reward_token == body.reward_token,
+            AdRewardLogModel.status == "pending",
+        )
+    )
+    log = result.scalar_one_or_none()
+    if not log:
+        raise HTTPException(status_code=400, detail="유효하지 않거나 만료된 토큰입니다.")
+
+    # 토큰 만료 체크
+    if (now - log.created_at).total_seconds() > token_expire_sec:
+        log.status = "expired"
+        await session.commit()
+        raise HTTPException(status_code=400, detail="토큰이 만료되었습니다. 다시 시도하세요.")
+
+    # 2. user_id / account_id 매칭
+    if log.user_id != user.id or log.account_id != body.account_id:
+        raise HTTPException(status_code=403, detail="권한이 없습니다.")
+
+    # 3. 최소 시청 시간 검증
+    elapsed = (now - log.created_at).total_seconds()
+    if elapsed < min_watch_sec:
+        raise HTTPException(
+            status_code=400,
+            detail=f"광고 시청이 완료되지 않았습니다. ({int(min_watch_sec - elapsed)}초 남음)",
+        )
+
+    # 4. 쿨다운 이중 체크
+    cooldown_result = await session.execute(
+        select(AdRewardLogModel)
+        .where(
+            AdRewardLogModel.user_id == user.id,
+            AdRewardLogModel.status == "claimed",
+        )
+        .order_by(AdRewardLogModel.claimed_at.desc())
+        .limit(1)
+    )
+    last_claimed = cooldown_result.scalar_one_or_none()
+    if last_claimed and last_claimed.claimed_at:
+        if (now - last_claimed.claimed_at).total_seconds() < cooldown_sec:
+            log.status = "expired"
+            await session.commit()
+            raise HTTPException(status_code=400, detail="쿨다운 중입니다. 잠시 후 다시 시도하세요.")
+
+    # 5. 보상 금액 결정
+    reward_amount = random.randint(
+        settings.ad_reward_min_amount,
+        settings.ad_reward_max_amount,
+    )
+
+    # 6. 계좌 업데이트
+    account = await _verify_account_owner(body.account_id, user, session)
+    account.cash_balance += reward_amount
+    account.bonus_balance = (getattr(account, 'bonus_balance', 0) or 0) + reward_amount
+    account.updated_at = now
+
+    # 7. 로그 업데이트
+    log.reward_amount = reward_amount
+    log.status = "claimed"
+    log.claimed_at = now
+
+    await session.commit()
+
+    return {
+        "ok": True,
+        "reward_amount": reward_amount,
+        "new_cash_balance": account.cash_balance,
+        "new_bonus_balance": account.bonus_balance,
+    }
+
+
+# --- Deposit (추가 입금) ---
+
+@router.post("/deposit")
+async def deposit(
+    body: DepositIn,
+    user: UserModel = Depends(get_current_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """모의 투자 계좌에 추가 입금."""
+    if body.amount <= 0:
+        raise HTTPException(status_code=400, detail="입금액은 0보다 커야 합니다.")
+
+    account = await _verify_account_owner(body.account_id, user, session)
+    account.cash_balance += body.amount
+    account.bonus_balance = (getattr(account, 'bonus_balance', 0) or 0) + body.amount
+    account.updated_at = datetime.now()
+
+    await session.commit()
+
+    return {
+        "ok": True,
+        "deposit_amount": body.amount,
+        "new_cash_balance": account.cash_balance,
+        "new_bonus_balance": account.bonus_balance,
+    }

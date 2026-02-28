@@ -53,6 +53,13 @@ class Settings(BaseSettings):
     n8n_webhook_url: str = "http://n8n_live:5678/webhook/autostock-pipeline"
     n8n_backend_url: str = "http://traderadar-backend:8000"
 
+    # Ad Reward
+    ad_reward_cooldown_seconds: int = 3600       # 1시간
+    ad_reward_min_amount: int = 500_000          # 50만원
+    ad_reward_max_amount: int = 2_000_000        # 200만원
+    ad_reward_min_watch_seconds: int = 15        # 최소 시청 시간
+    ad_reward_token_expire_seconds: int = 600    # 토큰 유효 시간 10분
+
     # Paths
     base_dir: Path = Path(__file__).resolve().parent.parent.parent
 

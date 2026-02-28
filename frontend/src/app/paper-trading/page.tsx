@@ -19,6 +19,7 @@ import {
   fetchLeaderboard,
   fetchMarketStatus,
   searchStocks,
+  depositPaperAccount,
 } from "@/lib/api";
 import type { LeaderboardEntry, LeaderboardResponse, StockSearchResult } from "@/lib/api";
 import { useQuery } from "@tanstack/react-query";
@@ -74,6 +75,7 @@ interface Trade {
 
 interface Summary {
   initial_balance: number;
+  bonus_balance: number;
   cash_balance: number;
   total_invested: number;
   total_eval: number;
@@ -856,6 +858,11 @@ export default function PaperTradingPage() {
   const [resetting, setResetting] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
+  // Deposit (추가 입금)
+  const [showDeposit, setShowDeposit] = useState(false);
+  const [depositAmount, setDepositAmount] = useState(10_000_000);
+  const [depositing, setDepositing] = useState(false);
+
   // Tab
   const [activeTab, setActiveTab] = useState<"portfolio" | "ranking">("portfolio");
 
@@ -945,6 +952,20 @@ export default function PaperTradingPage() {
     }, 1_000);
     return () => clearInterval(tick);
   }, [activeAccountId, refreshSec, loadData]);
+
+  const handleDeposit = async () => {
+    if (!activeAccountId || depositing || depositAmount <= 0) return;
+    setDepositing(true);
+    try {
+      await depositPaperAccount(activeAccountId, depositAmount);
+      setShowDeposit(false);
+      await loadData(activeAccountId);
+    } catch {
+      // ignore
+    } finally {
+      setDepositing(false);
+    }
+  };
 
   const handleCreateAccount = async () => {
     setCreating(true);
@@ -1216,6 +1237,11 @@ export default function PaperTradingPage() {
           <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4">
             <div className="text-xs text-[var(--muted)] mb-1">총 자산</div>
             <div className="text-lg font-bold">{formatKRW(summary.total_assets)}원</div>
+            {summary.bonus_balance > 0 && (
+              <div className="text-xs text-amber-400 mt-0.5">
+                초기 {formatKRW(summary.initial_balance)} + 입금 {formatKRW(summary.bonus_balance)}
+              </div>
+            )}
           </div>
           <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4">
             <div className="text-xs text-[var(--muted)] mb-1">총 수익률</div>
@@ -1226,6 +1252,14 @@ export default function PaperTradingPage() {
           <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4">
             <div className="text-xs text-[var(--muted)] mb-1">현금 잔고</div>
             <div className="text-lg font-bold">{formatKRW(summary.cash_balance)}원</div>
+            <div className="mt-2">
+              <button
+                onClick={() => setShowDeposit(true)}
+                className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 text-xs font-medium transition-colors"
+              >
+                + 추가 입금
+              </button>
+            </div>
           </div>
           <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4">
             <div className="text-xs text-[var(--muted)] mb-1">보유 종목</div>
@@ -1239,12 +1273,17 @@ export default function PaperTradingPage() {
         </div>
       )}
 
+      {/* Manual Buy */}
+      {activeAccountId && (
+        <ManualBuyForm accountId={activeAccountId} onSuccess={handleRefresh} />
+      )}
+
       {/* Positions */}
       <div>
         <h2 className="text-lg font-bold mb-3">보유 포지션</h2>
         {positions.length === 0 ? (
           <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-8 text-center text-[var(--muted)]">
-            보유 중인 포지션이 없습니다. 추천 페이지에서 모의 매수하거나 아래에서 수동 매수하세요.
+            보유 중인 포지션이 없습니다. 추천 페이지에서 모의 매수하거나 위에서 수동 매수하세요.
           </div>
         ) : (
           <>
@@ -1363,11 +1402,6 @@ export default function PaperTradingPage() {
           cashBalance={summary?.cash_balance}
           onSuccess={handleRefresh}
         />
-      )}
-
-      {/* Manual Buy */}
-      {activeAccountId && (
-        <ManualBuyForm accountId={activeAccountId} onSuccess={handleRefresh} />
       )}
 
       {/* Trade History */}
@@ -1514,6 +1548,55 @@ export default function PaperTradingPage() {
           onClose={() => setSellTarget(null)}
           onSuccess={handleRefresh}
         />
+      )}
+
+      {/* Deposit Modal */}
+      {showDeposit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setShowDeposit(false)} />
+          <div className="relative bg-[var(--card)] border border-[var(--card-border)] rounded-xl p-6 w-full max-w-sm mx-4 shadow-2xl">
+            <h3 className="text-lg font-bold mb-4">추가 입금</h3>
+            <div className="flex flex-wrap gap-2 mb-3">
+              {[1_000_000, 5_000_000, 10_000_000, 50_000_000].map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setDepositAmount(v)}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    depositAmount === v ? "bg-blue-600 text-white" : "bg-white/10 text-[var(--muted)] hover:bg-white/20"
+                  }`}
+                >
+                  {formatKRW(v)}원
+                </button>
+              ))}
+            </div>
+            <div>
+              <label className="block text-sm text-[var(--muted)] mb-1">입금액 (원)</label>
+              <input
+                type="number"
+                value={depositAmount}
+                onChange={(e) => setDepositAmount(Math.max(0, Number(e.target.value)))}
+                className="w-full h-10 rounded-lg bg-white/5 border border-[var(--card-border)] px-3 text-sm focus:outline-none focus:border-blue-500"
+                min={0}
+                step={1_000_000}
+              />
+            </div>
+            <div className="flex gap-2 mt-4">
+              <button
+                onClick={() => setShowDeposit(false)}
+                className="flex-1 py-2.5 rounded-lg bg-white/10 hover:bg-white/20 text-sm transition-colors"
+              >
+                취소
+              </button>
+              <button
+                onClick={handleDeposit}
+                disabled={depositing || depositAmount <= 0}
+                className="flex-1 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium transition-colors"
+              >
+                {depositing ? "처리 중..." : `${formatKRW(depositAmount)}원 입금`}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       </>
       )}

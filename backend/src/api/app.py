@@ -11,7 +11,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from src.config.settings import settings
 from src.db.database import init_db, close_db
-from src.api.routes import recommendations, analysis, news, pipeline, websocket, n8n, auth, watchlist, saved_analysis, prices, paper_trading, fundamental, events
+from src.api.routes import recommendations, analysis, news, pipeline, websocket, n8n, auth, watchlist, saved_analysis, prices, paper_trading, fundamental, events, admin
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +64,7 @@ app.include_router(prices.router, prefix="/api/prices", tags=["prices"])
 app.include_router(paper_trading.router, prefix="/api/paper", tags=["paper-trading"])
 app.include_router(fundamental.router, prefix="/api/fundamental", tags=["fundamental"])
 app.include_router(events.router, prefix="/api/events", tags=["events"])
+app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 
 
 @app.get("/api/health")

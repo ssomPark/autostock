@@ -14,7 +14,8 @@ const navItems = [
   { href: "/paper-trading", label: "모의 투자", icon: "💰", authOnly: true },
   { href: "/news", label: "뉴스", icon: "📰" },
   { href: "/pipeline", label: "파이프라인", icon: "⚙️" },
-];
+  { href: "/admin", label: "관리자", icon: "🛡️", adminOnly: true },
+] as const;
 
 function UserSection() {
   const { user, isAuthenticated, isLoading, logout } = useAuth();
@@ -76,8 +77,12 @@ function UserSection() {
 export function Sidebar() {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const { isAuthenticated } = useAuth();
-  const visibleNav = navItems.filter((item) => !item.authOnly || isAuthenticated);
+  const { isAuthenticated, user } = useAuth();
+  const visibleNav = navItems.filter((item) => {
+    if ("adminOnly" in item && item.adminOnly) return user?.is_admin;
+    if ("authOnly" in item && item.authOnly) return isAuthenticated;
+    return true;
+  });
 
   return (
     <>

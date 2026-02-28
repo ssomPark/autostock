@@ -64,6 +64,7 @@ async def init_db() -> None:
             "ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS source VARCHAR(20) DEFAULT 'news'",
             "ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS fundamental_score FLOAT",
             "ALTER TABLE recommendations ADD COLUMN IF NOT EXISTS fundamental_category VARCHAR(20)",
+            "ALTER TABLE paper_accounts ADD COLUMN IF NOT EXISTS bonus_balance FLOAT DEFAULT 0.0",
         ]:
             try:
                 await conn.execute(text(stmt))

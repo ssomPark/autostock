@@ -264,6 +264,55 @@ export async function fetchExchangeRate(): Promise<{ rate: number; pair: string 
   return fetchWithAuth("/api/paper/exchange-rate");
 }
 
+// --- Deposit API ---
+
+export async function depositPaperAccount(accountId: number, amount: number): Promise<{
+  ok: boolean;
+  deposit_amount: number;
+  new_cash_balance: number;
+  new_bonus_balance: number;
+}> {
+  return fetchWithAuth("/api/paper/deposit", {
+    method: "POST",
+    body: JSON.stringify({ account_id: accountId, amount }),
+  });
+}
+
+// --- Ad Reward API ---
+
+export interface AdRewardStatus {
+  can_watch: boolean;
+  cooldown_remaining: number;
+  next_available_at: string | null;
+  total_earned: number;
+  today_count: number;
+}
+
+export interface AdRewardClaimResponse {
+  ok: boolean;
+  reward_amount: number;
+  new_cash_balance: number;
+  new_bonus_balance: number;
+}
+
+export async function fetchAdRewardStatus(accountId: number): Promise<AdRewardStatus> {
+  return fetchWithAuth(`/api/paper/ad-reward/status?account_id=${accountId}`);
+}
+
+export async function requestAdReward(accountId: number): Promise<{ reward_token: string | null; can_watch: boolean; cooldown_remaining: number }> {
+  return fetchWithAuth("/api/paper/ad-reward/request", {
+    method: "POST",
+    body: JSON.stringify({ account_id: accountId }),
+  });
+}
+
+export async function claimAdReward(token: string, accountId: number): Promise<AdRewardClaimResponse> {
+  return fetchWithAuth("/api/paper/ad-reward/claim", {
+    method: "POST",
+    body: JSON.stringify({ reward_token: token, account_id: accountId }),
+  });
+}
+
 // --- Leaderboard API ---
 
 export interface LeaderboardEntry {
@@ -455,6 +504,59 @@ export function addEventStock(
 
 export function removeEventStock(eventId: number, stockId: number): Promise<{ success: boolean }> {
   return fetchJSON(`/events/${eventId}/stocks/${stockId}`, { method: "DELETE" });
+}
+
+// --- Admin API (authenticated, direct to backend) ---
+
+export async function fetchAdminDashboard() {
+  return fetchWithAuth("/api/admin/dashboard");
+}
+
+export async function fetchAdminUsers(params?: { search?: string; page?: number; size?: number }) {
+  const qs = new URLSearchParams();
+  if (params?.search) qs.set("search", params.search);
+  if (params?.page) qs.set("page", String(params.page));
+  if (params?.size) qs.set("size", String(params.size));
+  const q = qs.toString();
+  return fetchWithAuth(`/api/admin/users${q ? `?${q}` : ""}`);
+}
+
+export async function fetchAdminUserDetail(userId: number) {
+  return fetchWithAuth(`/api/admin/users/${userId}`);
+}
+
+export async function fetchAdminAdRewards(params?: { status?: string; user_id?: number; page?: number; size?: number }) {
+  const qs = new URLSearchParams();
+  if (params?.status) qs.set("status", params.status);
+  if (params?.user_id) qs.set("user_id", String(params.user_id));
+  if (params?.page) qs.set("page", String(params.page));
+  if (params?.size) qs.set("size", String(params.size));
+  const q = qs.toString();
+  return fetchWithAuth(`/api/admin/ad-rewards${q ? `?${q}` : ""}`);
+}
+
+export async function fetchAdminAdRewardStats() {
+  return fetchWithAuth("/api/admin/ad-rewards/stats");
+}
+
+export async function fetchAdminAdRewardSettings() {
+  return fetchWithAuth("/api/admin/ad-rewards/settings");
+}
+
+export async function fetchAdminPaperTradingStats() {
+  return fetchWithAuth("/api/admin/paper-trading/stats");
+}
+
+export async function fetchAdminEvents(params?: { page?: number; size?: number }) {
+  const qs = new URLSearchParams();
+  if (params?.page) qs.set("page", String(params.page));
+  if (params?.size) qs.set("size", String(params.size));
+  const q = qs.toString();
+  return fetchWithAuth(`/api/admin/events${q ? `?${q}` : ""}`);
+}
+
+export async function toggleAdminEventActive(eventId: number) {
+  return fetchWithAuth(`/api/admin/events/${eventId}/toggle-active`, { method: "PATCH" });
 }
 
 export function subscribePipelineStream(

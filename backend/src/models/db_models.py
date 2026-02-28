@@ -242,6 +242,7 @@ class PaperAccountModel(Base):
     name = Column(String(100), nullable=False, default="기본 계좌")
     initial_balance = Column(Float, nullable=False, default=100_000_000)
     cash_balance = Column(Float, nullable=False, default=100_000_000)
+    bonus_balance = Column(Float, nullable=False, default=0.0)  # 광고 보상 누적
     currency = Column(String(10), nullable=False, default="KRW")
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.now)
@@ -357,6 +358,26 @@ class EventStockModel(Base):
     __table_args__ = (
         Index("ix_event_stocks_event_id", "event_id"),
         Index("ix_event_stocks_ticker", "ticker"),
+    )
+
+
+class AdRewardLogModel(Base):
+    """광고 보상 로그."""
+    __tablename__ = "ad_reward_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_id = Column(Integer, ForeignKey("paper_accounts.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    reward_token = Column(String(100), unique=True, nullable=False)
+    reward_amount = Column(Float, nullable=True)
+    status = Column(String(20), default="pending")  # pending → claimed / expired
+    created_at = Column(DateTime, default=datetime.now)
+    claimed_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("ix_ad_reward_logs_user_id", "user_id"),
+        Index("ix_ad_reward_logs_account_id", "account_id"),
+        Index("ix_ad_reward_logs_token", "reward_token"),
     )
 
 
