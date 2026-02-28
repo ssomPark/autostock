@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import urllib.parse
@@ -140,78 +141,82 @@ async def get_financials(
         return rl_error
 
     try:
-        yf_ticker = _kr_ticker_to_yf(ticker, market)
-        t = yf.Ticker(yf_ticker)
-        info = t.info or {}
-
-        name = info.get("shortName") or info.get("longName") or ticker
-        sector = info.get("sector", "")
-        industry = info.get("industry", "")
-        market_cap = info.get("marketCap")
-        current_price = info.get("currentPrice") or info.get("regularMarketPrice")
-        previous_close = info.get("previousClose") or info.get("regularMarketPreviousClose")
-        change_pct = None
-        if current_price and previous_close and previous_close != 0:
-            change_pct = round((current_price - previous_close) / previous_close * 100, 2)
-
-        pe_ratio = info.get("trailingPE")
-        forward_pe = info.get("forwardPE")
-        pb_ratio = info.get("priceToBook")
-        dividend_yield = info.get("dividendYield")
-        high_52w = info.get("fiftyTwoWeekHigh")
-        low_52w = info.get("fiftyTwoWeekLow")
-        roe = info.get("returnOnEquity")
-        debt_to_equity = info.get("debtToEquity")
-        if debt_to_equity is not None:
-            debt_to_equity = round(debt_to_equity / 100, 2)
-
-        revenue = []
-        net_income = []
-        operating_income = []
-        fiscal_years = []
-
-        try:
-            inc = t.income_stmt
-            if inc is not None and not inc.empty:
-                for col in inc.columns[:3]:
-                    year_label = str(col.year) if hasattr(col, "year") else str(col)[:4]
-                    fiscal_years.append(year_label)
-                    rev_row = inc.loc["Total Revenue"] if "Total Revenue" in inc.index else None
-                    revenue.append(int(rev_row[col]) if rev_row is not None and pd.notna(rev_row[col]) else None)
-                    ni_row = inc.loc["Net Income"] if "Net Income" in inc.index else None
-                    net_income.append(int(ni_row[col]) if ni_row is not None and pd.notna(ni_row[col]) else None)
-                    oi_row = inc.loc["Operating Income"] if "Operating Income" in inc.index else None
-                    operating_income.append(int(oi_row[col]) if oi_row is not None and pd.notna(oi_row[col]) else None)
-        except Exception as e:
-            logger.warning(f"Failed to fetch income statement for {ticker}: {e}")
-
-        result = {
-            "ticker": ticker,
-            "name": name,
-            "sector": sector,
-            "industry": industry,
-            "market_cap": market_cap,
-            "current_price": current_price,
-            "change_pct": change_pct,
-            "pe_ratio": pe_ratio,
-            "forward_pe": forward_pe,
-            "pb_ratio": pb_ratio,
-            "dividend_yield": dividend_yield,
-            "52w_high": high_52w,
-            "52w_low": low_52w,
-            "roe": roe,
-            "debt_to_equity": debt_to_equity,
-            "revenue": revenue,
-            "net_income": net_income,
-            "operating_income": operating_income,
-            "fiscal_years": fiscal_years,
-        }
-
+        result = await asyncio.to_thread(_fetch_financials_sync, ticker, market)
         return JSONResponse(content={"success": True, "data": _sanitize(result)}, headers=rl_headers)
 
     except Exception as e:
         logger.error(f"Failed to fetch financials for {ticker}: {e}")
-        return {"success": False, "message": str(e)}
+        return {"success": False, "message": "재무 데이터를 가져올 수 없습니다."}
+
+
+def _fetch_financials_sync(ticker: str, market: str) -> dict:
+    """Synchronous yfinance financials fetch (runs in thread pool)."""
+    yf_ticker = _kr_ticker_to_yf(ticker, market)
+    t = yf.Ticker(yf_ticker)
+    info = t.info or {}
+
+    name = info.get("shortName") or info.get("longName") or ticker
+    sector = info.get("sector", "")
+    industry = info.get("industry", "")
+    market_cap = info.get("marketCap")
+    current_price = info.get("currentPrice") or info.get("regularMarketPrice")
+    previous_close = info.get("previousClose") or info.get("regularMarketPreviousClose")
+    change_pct = None
+    if current_price and previous_close and previous_close != 0:
+        change_pct = round((current_price - previous_close) / previous_close * 100, 2)
+
+    pe_ratio = info.get("trailingPE")
+    forward_pe = info.get("forwardPE")
+    pb_ratio = info.get("priceToBook")
+    dividend_yield = info.get("dividendYield")
+    high_52w = info.get("fiftyTwoWeekHigh")
+    low_52w = info.get("fiftyTwoWeekLow")
+    roe = info.get("returnOnEquity")
+    debt_to_equity = info.get("debtToEquity")
+    if debt_to_equity is not None:
+        debt_to_equity = round(debt_to_equity / 100, 2)
+
+    revenue = []
+    net_income = []
+    operating_income = []
+    fiscal_years = []
+
+    try:
+        inc = t.income_stmt
+        if inc is not None and not inc.empty:
+            for col in inc.columns[:3]:
+                year_label = str(col.year) if hasattr(col, "year") else str(col)[:4]
+                fiscal_years.append(year_label)
+                rev_row = inc.loc["Total Revenue"] if "Total Revenue" in inc.index else None
+                revenue.append(int(rev_row[col]) if rev_row is not None and pd.notna(rev_row[col]) else None)
+                ni_row = inc.loc["Net Income"] if "Net Income" in inc.index else None
+                net_income.append(int(ni_row[col]) if ni_row is not None and pd.notna(ni_row[col]) else None)
+                oi_row = inc.loc["Operating Income"] if "Operating Income" in inc.index else None
+                operating_income.append(int(oi_row[col]) if oi_row is not None and pd.notna(oi_row[col]) else None)
+    except Exception as e:
+        logger.warning(f"Failed to fetch income statement for {ticker}: {e}")
+
+    return {
+        "ticker": ticker,
+        "name": name,
+        "sector": sector,
+        "industry": industry,
+        "market_cap": market_cap,
+        "current_price": current_price,
+        "change_pct": change_pct,
+        "pe_ratio": pe_ratio,
+        "forward_pe": forward_pe,
+        "pb_ratio": pb_ratio,
+        "dividend_yield": dividend_yield,
+        "52w_high": high_52w,
+        "52w_low": low_52w,
+        "roe": roe,
+        "debt_to_equity": debt_to_equity,
+        "revenue": revenue,
+        "net_income": net_income,
+        "operating_income": operating_income,
+        "fiscal_years": fiscal_years,
+    }
 
 
 @router.get("/{ticker}/score")
@@ -227,12 +232,12 @@ async def get_score(
         return rl_error
 
     try:
-        df = _get_ohlcv_with_fallback(ticker, market)
+        df = await asyncio.to_thread(_get_ohlcv_with_fallback, ticker, market)
         if df.empty:
             return {"success": False, "message": f"No data available for {ticker}"}
 
         # Fetch fundamental data for confidence adjustment
-        fundamentals = _get_fundamentals(ticker, market)
+        fundamentals = await asyncio.to_thread(_get_fundamentals, ticker, market)
         result = _sanitize(ScoringEngine(df, fundamentals=fundamentals).compute())
         return JSONResponse(content={"success": True, "data": result}, headers=rl_headers)
     except Exception as e:
@@ -289,7 +294,7 @@ async def get_full_analysis(
     if rl_error is not None:
         return rl_error
 
-    df = _get_ohlcv_with_fallback(ticker, market)
+    df = await asyncio.to_thread(_get_ohlcv_with_fallback, ticker, market)
     if df.empty:
         return {"success": False, "message": f"No data available for {ticker}"}
 
@@ -299,7 +304,7 @@ async def get_full_analysis(
     volume = _sanitize(VolumeAnalyzer(df).get_signal())
 
     # Fetch company name
-    fundamentals = _get_fundamentals(ticker, market)
+    fundamentals = await asyncio.to_thread(_get_fundamentals, ticker, market)
     name = fundamentals.get("shortName") or ticker
 
     return JSONResponse(
@@ -331,7 +336,7 @@ async def get_ohlcv(
     if rl_error is not None:
         return rl_error
 
-    df = _get_ohlcv_with_fallback(ticker, market)
+    df = await asyncio.to_thread(_get_ohlcv_with_fallback, ticker, market)
     if df.empty:
         return {"success": False, "message": "No data", "data": []}
 

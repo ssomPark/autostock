@@ -35,6 +35,7 @@ def main():
         log_level="info",
         proxy_headers=True,
         forwarded_allow_ips="*",
+        workers=4,
     )
 
 

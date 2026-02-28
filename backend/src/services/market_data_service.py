@@ -49,7 +49,7 @@ class MarketDataService:
             result = self.us_api._run(json.dumps({"ticker": ticker, "action": "ohlcv", "period": period}))
 
         try:
-            data = json.loads(result) if isinstance(result, str) else eval(result)
+            data = json.loads(result) if isinstance(result, str) else result
             df = pd.DataFrame(data)
             if "date" in df.columns:
                 df["date"] = pd.to_datetime(df["date"])
@@ -68,7 +68,7 @@ class MarketDataService:
             result = self.us_api._run(json.dumps({"ticker": ticker, "action": "price"}))
 
         try:
-            data = json.loads(result) if isinstance(result, str) else eval(result)
+            data = json.loads(result) if isinstance(result, str) else result
         except Exception as e:
             logger.error(f"Failed to parse price for {ticker}: {e}")
             data = {"ticker": ticker, "current_price": 0}
@@ -111,7 +111,7 @@ class MarketDataService:
             result = self.us_api._run(json.dumps({"ticker": ticker, "action": "info"}))
 
         try:
-            return json.loads(result) if isinstance(result, str) else eval(result)
+            return json.loads(result) if isinstance(result, str) else result
         except Exception as e:
             logger.error(f"Failed to get info for {ticker}: {e}")
             return {"ticker": ticker}
