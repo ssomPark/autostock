@@ -271,7 +271,7 @@ async def execute_buy(
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(status_code=400, detail=f"가격 조회 실패: {e}")
+            raise HTTPException(status_code=400, detail="현재가를 조회할 수 없습니다. 잠시 후 다시 시도해주세요.")
 
     # Resolve Korean name
     stock_name = body.name

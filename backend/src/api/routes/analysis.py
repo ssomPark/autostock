@@ -24,6 +24,7 @@ from src.config.settings import settings
 from src.models.db_models import UserModel
 from src.services.market_data_service import MarketDataService
 from src.utils.rate_limiter import check_analysis_limit
+from src.utils.redis_cache import cache_get_json, cache_set_json
 
 logger = logging.getLogger(__name__)
 
@@ -140,9 +141,17 @@ async def get_financials(
     if rl_error is not None:
         return rl_error
 
+    # Redis cache (1 hour TTL)
+    cache_key = f"financials:{ticker}:{market}"
+    cached = await cache_get_json(cache_key)
+    if cached is not None:
+        return JSONResponse(content={"success": True, "data": cached}, headers=rl_headers)
+
     try:
         result = await asyncio.to_thread(_fetch_financials_sync, ticker, market)
-        return JSONResponse(content={"success": True, "data": _sanitize(result)}, headers=rl_headers)
+        sanitized = _sanitize(result)
+        await cache_set_json(cache_key, sanitized, ttl=3600)
+        return JSONResponse(content={"success": True, "data": sanitized}, headers=rl_headers)
 
     except Exception as e:
         logger.error(f"Failed to fetch financials for {ticker}: {e}")
@@ -231,6 +240,12 @@ async def get_score(
     if rl_error is not None:
         return rl_error
 
+    # Redis cache (10 min TTL)
+    cache_key = f"score:{ticker}:{market}"
+    cached = await cache_get_json(cache_key)
+    if cached is not None:
+        return JSONResponse(content={"success": True, "data": cached}, headers=rl_headers)
+
     try:
         df = await asyncio.to_thread(_get_ohlcv_with_fallback, ticker, market)
         if df.empty:
@@ -239,10 +254,11 @@ async def get_score(
         # Fetch fundamental data for confidence adjustment
         fundamentals = await asyncio.to_thread(_get_fundamentals, ticker, market)
         result = _sanitize(ScoringEngine(df, fundamentals=fundamentals).compute())
+        await cache_set_json(cache_key, result, ttl=600)
         return JSONResponse(content={"success": True, "data": result}, headers=rl_headers)
     except Exception as e:
         logger.error(f"Scoring failed for {ticker}: {e}")
-        return {"success": False, "message": str(e)}
+        return {"success": False, "message": "종합 점수 산출에 실패했습니다."}
 
 
 def _get_fundamentals(ticker: str, market: str) -> dict:
@@ -336,6 +352,12 @@ async def get_ohlcv(
     if rl_error is not None:
         return rl_error
 
+    # Redis cache (15 min TTL)
+    cache_key = f"ohlcv:{ticker}:{market}"
+    cached = await cache_get_json(cache_key)
+    if cached is not None:
+        return JSONResponse(content={"success": True, "data": cached}, headers=rl_headers)
+
     df = await asyncio.to_thread(_get_ohlcv_with_fallback, ticker, market)
     if df.empty:
         return {"success": False, "message": "No data", "data": []}
@@ -357,6 +379,7 @@ async def get_ohlcv(
         })
 
     records.sort(key=lambda x: x["time"])
+    await cache_set_json(cache_key, records, ttl=900)
     return JSONResponse(content={"success": True, "data": records}, headers=rl_headers)
 
 

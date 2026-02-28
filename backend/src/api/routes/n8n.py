@@ -250,7 +250,7 @@ async def market_screener(req: MarketScreenerRequest):
         return {"success": True, "data": data, "count": len(data)}
     except Exception as e:
         logger.error(f"Market screener failed: {e}")
-        return {"success": False, "data": [], "count": 0, "error": str(e)}
+        return {"success": False, "data": [], "count": 0, "error": "스크리닝 처리 중 오류가 발생했습니다."}
 
 
 @router.post("/aggregate")
@@ -387,4 +387,4 @@ async def save_recommendations(
     except Exception as e:
         await session.rollback()
         logger.error(f"Failed to save recommendations: {e}")
-        return {"success": False, "message": str(e)}
+        return {"success": False, "message": "추천 저장 중 오류가 발생했습니다."}

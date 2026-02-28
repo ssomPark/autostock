@@ -40,9 +40,14 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+_cors_origins = [settings.frontend_url]
+if "localhost" in settings.frontend_url or "127.0.0.1" in settings.frontend_url:
+    # Dev mode: add extra local origins
+    _cors_origins += ["http://localhost:3000", "http://localhost:3100"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_url, "http://localhost:3000", "http://localhost:3100"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
