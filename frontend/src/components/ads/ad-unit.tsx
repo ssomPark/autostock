@@ -9,6 +9,18 @@ declare global {
   }
 }
 
+/** Load the AdSense script once globally (only when first AdUnit mounts). */
+let _scriptLoaded = false;
+function ensureAdsenseScript(client: string) {
+  if (_scriptLoaded) return;
+  _scriptLoaded = true;
+  const s = document.createElement("script");
+  s.src = `https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${client}`;
+  s.async = true;
+  s.crossOrigin = "anonymous";
+  document.head.appendChild(s);
+}
+
 interface AdUnitProps {
   slot: string;
   format?: "auto" | "fluid" | "rectangle";
@@ -24,12 +36,17 @@ export function AdUnit({ slot, format = "auto", className = "" }: AdUnitProps) {
 
   useEffect(() => {
     if (!client || isAuthenticated || pushed.current) return;
-    try {
-      (window.adsbygoogle = window.adsbygoogle || []).push({});
-      pushed.current = true;
-    } catch {
-      // AdSense not loaded
-    }
+    ensureAdsenseScript(client);
+    // Wait for script to load before pushing
+    const timer = setTimeout(() => {
+      try {
+        (window.adsbygoogle = window.adsbygoogle || []).push({});
+        pushed.current = true;
+      } catch {
+        // AdSense not loaded yet
+      }
+    }, 300);
+    return () => clearTimeout(timer);
   }, [client, isAuthenticated]);
 
   // Don't render for logged-in users or if no client ID

@@ -51,6 +51,10 @@ async def _check_rate_limit(request: Request, user: UserModel | None, ticker: st
         return {}, None  # Logged-in users have no limit
 
     ip = _get_client_ip(request)
+
+    # Docker 내부 네트워크 (N8N, 기타 서비스) → rate limit 면제
+    if ip.startswith(("172.", "10.", "192.168.", "127.")):
+        return {}, None
     allowed, remaining, reset_seconds = await check_analysis_limit(ip, ticker)
     headers = {
         "X-RateLimit-Remaining": str(remaining),

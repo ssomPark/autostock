@@ -6,17 +6,23 @@ Endpoints called by N8N workflow to orchestrate the analysis pipeline.
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import yfinance as yf
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.analysis.scoring_engine import ScoringEngine
 from src.analysis.signal_aggregator import ComponentSignal, SignalAggregator
 from src.db.database import get_async_session
-from src.models.db_models import PipelineRunModel, RecommendationModel
+from src.models.db_models import (
+    EventStockModel,
+    MarketEventModel,
+    PipelineRunModel,
+    RecommendationModel,
+)
 from src.services.market_screener import MarketScreener
 from src.services.pipeline_tracker import tracker
 from src.tools.stock_mapper import KEYWORD_TICKER_MAP
@@ -101,6 +107,107 @@ def _resolve_stock_name(ticker: str, market: str = "KOSPI") -> str:
         logger.warning(f"Failed to resolve name for {ticker}: {e}")
 
     return ticker
+
+
+# --- Event & Diversity Helpers ---
+
+
+async def _get_event_stocks(
+    session: AsyncSession, market: str, days: int = 30
+) -> list[dict]:
+    """향후 N일 이내 이벤트의 positive 수혜종목 조회."""
+    now = datetime.now()
+    cutoff = now + timedelta(days=days)
+    kr_markets = {"KOSPI", "KOSDAQ"}
+
+    stmt = (
+        select(EventStockModel, MarketEventModel)
+        .join(MarketEventModel, EventStockModel.event_id == MarketEventModel.id)
+        .where(
+            MarketEventModel.is_active == True,  # noqa: E712
+            MarketEventModel.event_date >= now,
+            MarketEventModel.event_date <= cutoff,
+            EventStockModel.expected_impact == "positive",
+        )
+    )
+    result = await session.execute(stmt)
+    rows = result.all()
+
+    stocks = []
+    seen: set[str] = set()
+    for es, ev in rows:
+        # 마켓 필터: KR 파이프라인이면 KOSPI/KOSDAQ만, US면 나머지
+        if market == "KR" and es.market not in kr_markets:
+            continue
+        if market == "US" and es.market in kr_markets:
+            continue
+        if es.ticker in seen:
+            continue
+        seen.add(es.ticker)
+
+        days_until = (ev.event_date - now).days
+        stocks.append({
+            "ticker": es.ticker,
+            "name": es.name,
+            "market": es.market,
+            "source": "event",
+            "event_title": ev.title,
+            "event_date": ev.event_date.strftime("%Y-%m-%d"),
+            "days_until_event": days_until,
+            "relation_type": es.relation_type,
+            "impact_level": ev.impact_level,
+        })
+
+    return stocks
+
+
+async def _get_recent_recommendation_tickers(
+    session: AsyncSession, market: str, days: int = 7
+) -> set[str]:
+    """최근 N일간 추천된 종목 ticker 집합."""
+    cutoff = datetime.now() - timedelta(days=days)
+    kr_markets = {"KOSPI", "KOSDAQ"}
+
+    stmt = select(RecommendationModel.ticker).where(
+        RecommendationModel.created_at >= cutoff,
+    )
+    result = await session.execute(stmt)
+    tickers = set()
+    for (ticker,) in result.all():
+        # 마켓 정보가 없으므로 모두 포함 (같은 ticker가 다른 마켓에 있을 확률 낮음)
+        tickers.add(ticker)
+    return tickers
+
+
+async def _get_stock_event_info(session: AsyncSession, ticker: str) -> str | None:
+    """종목 관련 향후 30일 이벤트 정보 문자열 반환."""
+    now = datetime.now()
+    cutoff = now + timedelta(days=30)
+
+    stmt = (
+        select(EventStockModel, MarketEventModel)
+        .join(MarketEventModel, EventStockModel.event_id == MarketEventModel.id)
+        .where(
+            EventStockModel.ticker == ticker,
+            EventStockModel.expected_impact == "positive",
+            MarketEventModel.is_active == True,  # noqa: E712
+            MarketEventModel.event_date >= now,
+            MarketEventModel.event_date <= cutoff,
+        )
+        .order_by(MarketEventModel.event_date)
+    )
+    result = await session.execute(stmt)
+    rows = result.all()
+    if not rows:
+        return None
+
+    parts = []
+    for es, ev in rows:
+        days_until = (ev.event_date - now).days
+        relation = "직접 수혜" if es.relation_type == "direct" else "간접 수혜" if es.relation_type == "indirect" else "섹터 수혜"
+        parts.append(f"{ev.title} ({relation}) - D-{days_until}")
+
+    return "\n📅 관련 이벤트: " + " | ".join(parts)
 
 
 # --- Request/Response Models ---
@@ -241,12 +348,43 @@ async def map_keywords_to_stocks(req: StockMappingRequest):
 
 
 @router.post("/market-screener")
-async def market_screener(req: MarketScreenerRequest):
-    """Screen stocks from market data (volume leaders, top movers)."""
+async def market_screener(
+    req: MarketScreenerRequest,
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Screen stocks from market data (volume leaders, top movers) + event stocks."""
     try:
         screener = MarketScreener()
         data = screener.screen(market=req.market, limit=req.limit)
         logger.info(f"Market screener returned {len(data)} stocks (market={req.market})")
+
+        # --- 이벤트 수혜종목 병합 ---
+        try:
+            event_stocks = await _get_event_stocks(session, req.market, days=30)
+            existing_tickers = {item["ticker"] for item in data}
+            added = 0
+            for es in event_stocks:
+                if es["ticker"] not in existing_tickers:
+                    data.append(es)
+                    existing_tickers.add(es["ticker"])
+                    added += 1
+            if added:
+                logger.info(f"Added {added} event stocks to screener results")
+        except Exception as e:
+            logger.warning(f"Event stock merge failed (non-fatal): {e}")
+
+        # --- 최근 추천 종목 뒤로 밀기 ---
+        try:
+            recent_tickers = await _get_recent_recommendation_tickers(session, req.market, days=7)
+            if recent_tickers:
+                new_stocks = [s for s in data if s["ticker"] not in recent_tickers]
+                old_stocks = [s for s in data if s["ticker"] in recent_tickers]
+                data = new_stocks + old_stocks
+                if old_stocks:
+                    logger.info(f"Deprioritized {len(old_stocks)} recently recommended stocks")
+        except Exception as e:
+            logger.warning(f"Recent recommendation deprioritize failed (non-fatal): {e}")
+
         return {"success": True, "data": data, "count": len(data)}
     except Exception as e:
         logger.error(f"Market screener failed: {e}")
@@ -327,19 +465,50 @@ async def save_recommendations(
 ):
     """Save recommendation results to the database."""
     try:
+        # 마켓 불일치 종목 필터링 (US 파이프라인에 한국 종목 등)
+        def _market_matches(rec_market: str, pipeline_market: str) -> bool:
+            kr_markets = {"KOSPI", "KOSDAQ"}
+            if pipeline_market == "KR":
+                return rec_market in kr_markets
+            if pipeline_market == "US":
+                return rec_market not in kr_markets
+            return True
+
+        filtered = [
+            rec for rec in req.recommendations
+            if _market_matches(rec.market, req.market)
+        ]
+        if len(filtered) < len(req.recommendations):
+            logger.info(
+                f"Filtered mismatched market: {len(req.recommendations)} → {len(filtered)}"
+            )
+
+        # 중복 종목 제거 (같은 ticker → composite_score가 높은 것만 유지)
+        deduped: dict[str, RecommendationItem] = {}
+        for rec in filtered:
+            existing = deduped.get(rec.ticker)
+            if existing is None or rec.composite_score > existing.composite_score:
+                deduped[rec.ticker] = rec
+        unique_recs = list(deduped.values())
+
+        if len(unique_recs) < len(filtered):
+            logger.info(
+                f"Deduplicated {len(filtered)} → {len(unique_recs)} recommendations"
+            )
+
         # Create pipeline run record
         pipeline_run = PipelineRunModel(
             market_type=req.market,
             status="completed",
             started_at=datetime.now(),
             completed_at=datetime.now(),
-            recommendations_count=len(req.recommendations),
+            recommendations_count=len(unique_recs),
         )
         session.add(pipeline_run)
         await session.flush()
 
         # Save each recommendation
-        for rec in req.recommendations:
+        for rec in unique_recs:
             # Resolve name if it's empty or same as ticker
             name = rec.name
             if not name or name == rec.ticker:
@@ -359,6 +528,15 @@ async def save_recommendations(
             except Exception as e:
                 logger.warning(f"ScoringEngine confidence failed for {rec.ticker}: {e}")
 
+            # 이벤트 정보 reasoning에 추가
+            reasoning = rec.reasoning
+            try:
+                event_info = await _get_stock_event_info(session, rec.ticker)
+                if event_info:
+                    reasoning = reasoning + event_info
+            except Exception as e:
+                logger.warning(f"Event info lookup failed for {rec.ticker}: {e}")
+
             recommendation = RecommendationModel(
                 pipeline_run_id=pipeline_run.id,
                 ticker=rec.ticker,
@@ -370,18 +548,18 @@ async def save_recommendations(
                 composite_score=rec.composite_score,
                 target_price=rec.target_price,
                 stop_loss=rec.stop_loss,
-                reasoning=rec.reasoning,
+                reasoning=reasoning,
                 component_signals=rec.component_signals,
                 detected_patterns=rec.detected_patterns,
             )
             session.add(recommendation)
 
         await session.commit()
-        logger.info(f"Saved {len(req.recommendations)} recommendations for pipeline {req.pipeline_id}")
+        logger.info(f"Saved {len(unique_recs)} recommendations for pipeline {req.pipeline_id}")
 
         return {
             "success": True,
-            "message": f"Saved {len(req.recommendations)} recommendations",
+            "message": f"Saved {len(unique_recs)} recommendations",
             "pipeline_run_id": pipeline_run.id,
         }
     except Exception as e:

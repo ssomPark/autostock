@@ -1,10 +1,10 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { Fragment, useState, useMemo } from "react";
 import { useQuery, useQueries } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { fetchRecommendations, fetchScore, fetchFinancials, saveAnalysisAPI, fetchPaperAccounts, createPaperAccount } from "@/lib/api";
+import { fetchRecommendations, fetchScore, fetchFinancials, saveAnalysisAPI, fetchPaperAccounts, createPaperAccount, fetchPaperPositions, executePaperSell } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { SparklineChart } from "@/components/charts/sparkline-chart";
 import { useLivePrices } from "@/hooks/use-live-prices";
@@ -92,11 +92,20 @@ export default function RecommendationsPage() {
   const [savedTickers, setSavedTickers] = useState<Set<string>>(new Set());
   const [saveError, setSaveError] = useState<string | null>(null);
 
+  // Sorting state
+  const [sortKey, setSortKey] = useState<"confidence" | "expected" | "change" | null>("confidence");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
+
   // Paper trading state
   const [orderTarget, setOrderTarget] = useState<any>(null);
   const [paperAccountId, setPaperAccountId] = useState<number | null>(null);
   const [paperCashBalance, setPaperCashBalance] = useState<number | undefined>(undefined);
   const [buySuccess, setBuySuccess] = useState<string | null>(null);
+
+  // Sell confirmation modal state
+  const [sellConfirmTarget, setSellConfirmTarget] = useState<any>(null);
+  const [sellLoading, setSellLoading] = useState(false);
+  const [sellSuccess, setSellSuccess] = useState<string | null>(null);
 
   const handlePaperBuy = async (rec: any, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -124,6 +133,82 @@ export default function RecommendationsPage() {
       if (err?.message?.includes("401")) {
         router.push("/auth/login");
       }
+    }
+  };
+
+  const handlePaperSell = async (rec: any, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!isAuthenticated) {
+      router.push("/auth/login");
+      return;
+    }
+    try {
+      let accId = paperAccountId;
+      if (!accId) {
+        const accounts = await fetchPaperAccounts();
+        if (accounts.length > 0) {
+          accId = accounts[0].id;
+          setPaperCashBalance(accounts[0].cash_balance);
+        } else {
+          alert("모의투자 계좌가 없습니다. 먼저 계좌를 생성해주세요.");
+          return;
+        }
+        setPaperAccountId(accId);
+      }
+      // Check if user holds this position
+      const positions = await fetchPaperPositions(accId!);
+      const pos = (positions as any[]).find((p: any) => p.ticker === rec.ticker);
+      if (!pos) {
+        alert("보유 중인 종목이 아닙니다");
+        return;
+      }
+      setSellConfirmTarget({ ...rec, accountId: accId, position: pos });
+    } catch (err: any) {
+      if (err?.message?.includes("401")) {
+        router.push("/auth/login");
+      }
+    }
+  };
+
+  const handleSellConfirm = async () => {
+    if (!sellConfirmTarget) return;
+    setSellLoading(true);
+    try {
+      const pos = sellConfirmTarget.position;
+      const lp = prices.get(sellConfirmTarget.ticker);
+      const sellPrice = lp?.live_price ?? sellConfirmTarget.current_price;
+      await executePaperSell({
+        account_id: sellConfirmTarget.accountId,
+        ticker: sellConfirmTarget.ticker,
+        quantity: pos.quantity,
+        price: sellPrice,
+      });
+      setSellSuccess(sellConfirmTarget.ticker);
+      setSellConfirmTarget(null);
+      setTimeout(() => setSellSuccess(null), 2000);
+    } catch (err: any) {
+      if (err?.message?.includes("401")) {
+        router.push("/auth/login");
+      } else {
+        alert("매도 실패: " + (err?.message ?? "알 수 없는 오류"));
+      }
+    } finally {
+      setSellLoading(false);
+    }
+  };
+
+  const handleSortClick = (key: "confidence" | "expected" | "change") => {
+    if (sortKey === key) {
+      if (sortDir === "asc") {
+        setSortDir("desc");
+      } else {
+        // Reset
+        setSortKey(null);
+        setSortDir("asc");
+      }
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
     }
   };
 
@@ -202,6 +287,88 @@ export default function RecommendationsPage() {
 
   const { prices, marketStatus, isAnyMarketOpen } = useLivePrices({ market });
 
+  // Helper to get sort value for a recommendation
+  const getSortValue = (rec: any, key: "confidence" | "expected" | "change"): number => {
+    if (key === "confidence") {
+      const live = liveScoreMap.get(`${rec.ticker}:${rec.market}`)?.confidence;
+      return live != null ? live / 100 : (rec.confidence ?? 0);
+    }
+    if (key === "expected") {
+      if (rec.current_price > 0 && rec.target_price) {
+        return ((rec.target_price - rec.current_price) / rec.current_price) * 100;
+      }
+      return -Infinity;
+    }
+    // change
+    const lp = prices.get(rec.ticker);
+    return lp?.change_from_rec ?? -Infinity;
+  };
+
+  const sortedRecs = useMemo(() => {
+    if (!sortKey) return recs;
+    return [...recs].sort((a, b) => {
+      const va = getSortValue(a, sortKey);
+      const vb = getSortValue(b, sortKey);
+      if (va === vb) return 0;
+      return sortDir === "asc" ? va - vb : vb - va;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recs, sortKey, sortDir, prices, liveScoreMap]);
+
+  // --- 적중률 대시보드 ---
+  const [showAccuracy, setShowAccuracy] = useState(false);
+
+  const accuracyStats = useMemo(() => {
+    const buys: { hit: boolean; targetHit: boolean; returnPct: number }[] = [];
+    const sells: { hit: boolean; targetHit: boolean; returnPct: number }[] = [];
+
+    for (const rec of recs) {
+      if (rec.action === "HOLD") continue;
+      const lp = prices.get(rec.ticker);
+      if (!lp || !rec.current_price || rec.current_price <= 0) continue;
+
+      const livePrice = lp.live_price;
+      const recPrice = rec.current_price;
+      const returnPct = ((livePrice - recPrice) / recPrice) * 100;
+
+      if (rec.action === "BUY") {
+        const hit = livePrice > recPrice;
+        const targetHit = rec.target_price ? livePrice >= rec.target_price : false;
+        buys.push({ hit, targetHit, returnPct });
+      } else if (rec.action === "SELL") {
+        const hit = livePrice < recPrice;
+        const targetHit = rec.target_price ? livePrice <= rec.target_price : false;
+        sells.push({ hit, targetHit, returnPct: -returnPct });
+      }
+    }
+
+    const all = [...buys, ...sells];
+    const total = all.length;
+    const hitCount = all.filter((x) => x.hit).length;
+    const targetHitCount = all.filter((x) => x.targetHit).length;
+
+    const buyTotal = buys.length;
+    const buyHit = buys.filter((x) => x.hit).length;
+
+    const sellTotal = sells.length;
+    const sellHit = sells.filter((x) => x.hit).length;
+
+    const overallRate = total > 0 ? (hitCount / total) * 100 : null;
+    const buyRate = buyTotal > 0 ? (buyHit / buyTotal) * 100 : null;
+    const sellRate = sellTotal > 0 ? (sellHit / sellTotal) * 100 : null;
+    const targetRate = total > 0 ? (targetHitCount / total) * 100 : null;
+    const avgReturn = total > 0 ? all.reduce((sum, x) => sum + x.returnPct, 0) / total : null;
+
+    return { overallRate, buyRate, sellRate, targetRate, avgReturn, total, buyTotal, sellTotal };
+  }, [recs, prices]);
+
+  const rateColor = (rate: number | null) => {
+    if (rate == null) return "var(--muted)";
+    if (rate >= 70) return "#4ade80";
+    if (rate >= 50) return "#facc15";
+    return "#f87171";
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -242,18 +409,93 @@ export default function RecommendationsPage() {
         </div>
       </div>
 
+      {/* 적중률 대시보드 */}
+      {!isLoading && accuracyStats.total > 0 && (
+        <div>
+          <button
+            onClick={() => setShowAccuracy((v) => !v)}
+            className="flex items-center gap-2 text-sm font-medium text-[var(--muted)] hover:text-[var(--foreground)] transition-colors"
+          >
+            적중률 분석 {showAccuracy ? "\u25B2" : "\u25BC"}
+            <span className="text-xs opacity-60">({accuracyStats.total}건 분석)</span>
+          </button>
+          {showAccuracy && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mt-3">
+              {/* 전체 적중률 */}
+              <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4 text-center">
+                <div
+                  className="text-2xl font-bold"
+                  style={{ color: rateColor(accuracyStats.overallRate) }}
+                >
+                  {accuracyStats.overallRate != null ? `${accuracyStats.overallRate.toFixed(1)}%` : "-"}
+                </div>
+                <div className="text-xs text-[var(--muted)] mt-1">전체 적중률</div>
+              </div>
+              {/* BUY 적중률 */}
+              <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4 text-center">
+                <div
+                  className="text-2xl font-bold"
+                  style={{ color: rateColor(accuracyStats.buyRate) }}
+                >
+                  {accuracyStats.buyRate != null ? `${accuracyStats.buyRate.toFixed(1)}%` : "-"}
+                </div>
+                <div className="text-xs text-[var(--muted)] mt-1">
+                  BUY 적중률
+                  {accuracyStats.buyTotal > 0 && <span className="opacity-60"> ({accuracyStats.buyTotal}건)</span>}
+                </div>
+              </div>
+              {/* SELL 적중률 */}
+              <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4 text-center">
+                <div
+                  className="text-2xl font-bold"
+                  style={{ color: rateColor(accuracyStats.sellRate) }}
+                >
+                  {accuracyStats.sellRate != null ? `${accuracyStats.sellRate.toFixed(1)}%` : "-"}
+                </div>
+                <div className="text-xs text-[var(--muted)] mt-1">
+                  SELL 적중률
+                  {accuracyStats.sellTotal > 0 && <span className="opacity-60"> ({accuracyStats.sellTotal}건)</span>}
+                </div>
+              </div>
+              {/* 목표 도달률 */}
+              <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4 text-center">
+                <div
+                  className="text-2xl font-bold"
+                  style={{ color: rateColor(accuracyStats.targetRate) }}
+                >
+                  {accuracyStats.targetRate != null ? `${accuracyStats.targetRate.toFixed(1)}%` : "-"}
+                </div>
+                <div className="text-xs text-[var(--muted)] mt-1">목표 도달률</div>
+              </div>
+              {/* 평균 수익률 */}
+              <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4 text-center">
+                <div
+                  className="text-2xl font-bold"
+                  style={{ color: accuracyStats.avgReturn != null ? (accuracyStats.avgReturn >= 0 ? "#4ade80" : "#f87171") : "var(--muted)" }}
+                >
+                  {accuracyStats.avgReturn != null
+                    ? `${accuracyStats.avgReturn >= 0 ? "+" : ""}${accuracyStats.avgReturn.toFixed(2)}%`
+                    : "-"}
+                </div>
+                <div className="text-xs text-[var(--muted)] mt-1">평균 수익률</div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {isLoading ? (
         <div className="text-[var(--muted)]">로딩 중...</div>
       ) : (
         <>
           {/* Mobile card view */}
           <div className="md:hidden space-y-3">
-            {data?.data?.length === 0 && (
+            {sortedRecs.length === 0 && (
               <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-8 text-center text-[var(--muted)]">
                 추천 데이터가 없습니다. 파이프라인을 실행해주세요.
               </div>
             )}
-            {data?.data?.map((rec: any, i: number) => {
+            {sortedRecs.map((rec: any, i: number) => {
               const showAd = i === 3;
               const lp = prices.get(rec.ticker);
               const expectedPct = rec.current_price > 0 && rec.target_price
@@ -285,10 +527,19 @@ export default function RecommendationsPage() {
                           {buySuccess === rec.ticker ? "완료!" : "모의매수"}
                         </button>
                       )}
+                      {rec.action === "SELL" && (
+                        <button
+                          onClick={(e) => handlePaperSell(rec, e)}
+                          className="px-2 py-1 rounded text-xs bg-red-600/20 text-red-400 hover:bg-red-600/30 transition-colors"
+                          title="모의 매도"
+                        >
+                          {sellSuccess === rec.ticker ? "완료!" : "모의매도"}
+                        </button>
+                      )}
                       <button
                         onClick={(e) => handleSave(rec, e)}
                         disabled={savingTicker === rec.ticker}
-                        className="p-1.5 rounded hover:bg-white/10 transition-colors"
+                        className="p-1.5 rounded hover:bg-[var(--surface-active)] transition-colors"
                         title="내 분석 기록에 저장"
                       >
                         {savingTicker === rec.ticker ? (
@@ -411,29 +662,47 @@ export default function RecommendationsPage() {
                   <th className="p-4">차트</th>
                   <th className="p-4">추천가</th>
                   <th className="p-4">실시간가</th>
-                  <th className="p-4">추천대비</th>
+                  <th
+                    className="p-4 cursor-pointer select-none hover:text-[var(--foreground)] transition-colors"
+                    onClick={() => handleSortClick("change")}
+                  >
+                    추천대비{" "}
+                    {sortKey === "change" && <span className="text-blue-400">{sortDir === "asc" ? "▲" : "▼"}</span>}
+                  </th>
                   <th className="p-4">판정</th>
-                  <th className="p-4">신뢰도</th>
+                  <th
+                    className="p-4 cursor-pointer select-none hover:text-[var(--foreground)] transition-colors"
+                    onClick={() => handleSortClick("confidence")}
+                  >
+                    신뢰도{" "}
+                    {sortKey === "confidence" && <span className="text-blue-400">{sortDir === "asc" ? "▲" : "▼"}</span>}
+                  </th>
                   <th className="p-4">목표가</th>
-                  <th className="p-4">기대수익</th>
+                  <th
+                    className="p-4 cursor-pointer select-none hover:text-[var(--foreground)] transition-colors"
+                    onClick={() => handleSortClick("expected")}
+                  >
+                    기대수익{" "}
+                    {sortKey === "expected" && <span className="text-blue-400">{sortDir === "asc" ? "▲" : "▼"}</span>}
+                  </th>
                   <th className="p-4">손절가</th>
                   <th className="p-4 w-20"></th>
                 </tr>
               </thead>
               <tbody>
-                {data?.data?.length === 0 && (
+                {sortedRecs.length === 0 && (
                   <tr>
                     <td colSpan={12} className="p-8 text-center text-[var(--muted)]">
                       추천 데이터가 없습니다. 파이프라인을 실행해주세요.
                     </td>
                   </tr>
                 )}
-                {data?.data?.map((rec: any, i: number) => {
+                {sortedRecs.map((rec: any, i: number) => {
                   const lp = prices.get(rec.ticker);
                   return (
                     <Fragment key={i}>
                       <tr
-                        className="border-b border-[var(--card-border)] hover:bg-white/5 cursor-pointer"
+                        className="border-b border-[var(--card-border)] hover:bg-[var(--surface-hover)] cursor-pointer"
                         onClick={() => setExpandedRow(expandedRow === i ? null : i)}
                       >
                         <td className="p-4 text-[var(--muted)]">
@@ -499,10 +768,19 @@ export default function RecommendationsPage() {
                                 {buySuccess === rec.ticker ? "완료!" : "모의매수"}
                               </button>
                             )}
+                            {rec.action === "SELL" && (
+                              <button
+                                onClick={(e) => handlePaperSell(rec, e)}
+                                className="px-2 py-1 rounded text-xs bg-red-600/20 text-red-400 hover:bg-red-600/30 transition-colors"
+                                title="모의 매도"
+                              >
+                                {sellSuccess === rec.ticker ? "완료!" : "모의매도"}
+                              </button>
+                            )}
                             <button
                               onClick={(e) => handleSave(rec, e)}
                               disabled={savingTicker === rec.ticker}
-                              className="p-1.5 rounded hover:bg-white/10 transition-colors"
+                              className="p-1.5 rounded hover:bg-[var(--surface-active)] transition-colors"
                               title="내 분석 기록에 저장"
                             >
                               {savingTicker === rec.ticker ? (
@@ -582,6 +860,52 @@ export default function RecommendationsPage() {
           recommendationConfidence={orderTarget.confidence}
           recommendationGrade={orderTarget.grade}
         />
+      )}
+
+      {/* Sell Confirmation Modal */}
+      {sellConfirmTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)]" onClick={() => setSellConfirmTarget(null)}>
+          <div
+            className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-6 w-full max-w-sm mx-4 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-bold">모의 매도 확인</h3>
+            <div className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-[var(--muted)]">종목</span>
+                <span className="font-medium">{sellConfirmTarget.name} ({sellConfirmTarget.ticker})</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-[var(--muted)]">보유수량</span>
+                <span className="font-medium">{sellConfirmTarget.position.quantity}주</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-[var(--muted)]">매도가</span>
+                <span className="font-medium">
+                  {formatPrice(
+                    prices.get(sellConfirmTarget.ticker)?.live_price ?? sellConfirmTarget.current_price,
+                    sellConfirmTarget.market,
+                  )}
+                </span>
+              </div>
+            </div>
+            <div className="flex gap-3 pt-2">
+              <button
+                onClick={() => setSellConfirmTarget(null)}
+                className="flex-1 px-4 py-2 rounded text-sm border border-[var(--card-border)] text-[var(--muted)] hover:bg-[var(--surface-hover)] transition-colors"
+              >
+                취소
+              </button>
+              <button
+                onClick={handleSellConfirm}
+                disabled={sellLoading}
+                className="flex-1 px-4 py-2 rounded text-sm bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50"
+              >
+                {sellLoading ? "처리 중..." : "전량 매도"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
