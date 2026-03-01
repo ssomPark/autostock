@@ -51,6 +51,7 @@ def _serialize_analysis(item: SavedAnalysisModel) -> dict:
         "created_at": (item.created_at.isoformat() if hasattr(item, "created_at") and item.created_at else
                        item.analyzed_at.isoformat() if item.analyzed_at else None),
         "memo": getattr(item, "memo", None),
+        "is_pinned": getattr(item, "is_pinned", False) or False,
     }
 
 
@@ -63,6 +64,7 @@ async def list_saved_analyses(
     signal: Optional[str] = None,
     market: Optional[str] = None,
     grade: Optional[str] = None,
+    pinned: Optional[bool] = None,
     sort_by: str = "analyzed_at",
     order: str = "desc",
     skip: int = 0,
@@ -72,6 +74,10 @@ async def list_saved_analyses(
     session: AsyncSession = Depends(get_async_session),
 ):
     query = select(SavedAnalysisModel).where(SavedAnalysisModel.user_id == user.id)
+
+    # 핀 필터
+    if pinned is not None:
+        query = query.where(SavedAnalysisModel.is_pinned == pinned)
 
     # latest_only: 종목당 최신 1건만
     if latest_only:
@@ -104,6 +110,48 @@ async def list_saved_analyses(
     result = await session.execute(query)
     items = result.scalars().all()
     return [_serialize_analysis(item) for item in items]
+
+
+# ──────────────────────────────────────────────
+# 1b. GET "/pinned" — 핀 고정 종목 목록 (종목당 최신 1건)
+# ──────────────────────────────────────────────
+@router.get("/pinned")
+async def list_pinned_analyses(
+    user: UserModel = Depends(get_current_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """핀 고정된 종목의 최신 분석만 반환."""
+    sub = (
+        select(func.max(SavedAnalysisModel.id).label("max_id"))
+        .where(
+            SavedAnalysisModel.user_id == user.id,
+            SavedAnalysisModel.is_pinned == True,
+        )
+        .group_by(SavedAnalysisModel.ticker)
+        .subquery()
+    )
+    result = await session.execute(
+        select(SavedAnalysisModel)
+        .where(SavedAnalysisModel.id.in_(select(sub.c.max_id)))
+        .order_by(SavedAnalysisModel.analyzed_at.desc())
+    )
+    items = result.scalars().all()
+
+    pinned_list = []
+    for item in items:
+        sc = item.score_data or {}
+        entry = sc.get("entry_price", {})
+        target = sc.get("target", {})
+        stop_loss = sc.get("stop_loss", {})
+
+        pinned_list.append({
+            **_serialize_analysis(item),
+            "entry_price": entry.get("consensus") if isinstance(entry, dict) else None,
+            "target_price": target.get("consensus") if isinstance(target, dict) else None,
+            "stop_loss": stop_loss.get("final") if isinstance(stop_loss, dict) else None,
+            "risk_reward": sc.get("risk_reward_ratio"),
+        })
+    return pinned_list
 
 
 # ──────────────────────────────────────────────
@@ -291,6 +339,34 @@ def _sanitize_val(val: Any) -> Any:
     except ImportError:
         pass
     return val
+
+
+# ──────────────────────────────────────────────
+# 4b. PUT "/{ticker}/pin" — 핀 토글
+# ──────────────────────────────────────────────
+@router.put("/{ticker}/pin")
+async def toggle_pin(
+    ticker: str,
+    user: UserModel = Depends(get_current_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """해당 종목의 최신 분석 레코드의 is_pinned를 토글."""
+    result = await session.execute(
+        select(SavedAnalysisModel)
+        .where(
+            SavedAnalysisModel.user_id == user.id,
+            SavedAnalysisModel.ticker == ticker,
+        )
+        .order_by(SavedAnalysisModel.analyzed_at.desc())
+        .limit(1)
+    )
+    item = result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="해당 종목의 분석 기록이 없습니다")
+
+    item.is_pinned = not (item.is_pinned or False)
+    await session.commit()
+    return {"ticker": ticker, "is_pinned": item.is_pinned}
 
 
 # ──────────────────────────────────────────────

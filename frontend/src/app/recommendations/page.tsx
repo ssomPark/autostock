@@ -4,11 +4,10 @@ import { Fragment, useState, useMemo } from "react";
 import { useQuery, useQueries } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { fetchRecommendations, fetchScore, fetchFinancials, saveAnalysisAPI, fetchPaperAccounts, createPaperAccount, fetchPaperPositions, executePaperSell } from "@/lib/api";
+import { fetchRecommendations, fetchScore, fetchFinancials, saveAnalysisAPI, togglePinAnalysis } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { SparklineChart } from "@/components/charts/sparkline-chart";
 import { useLivePrices } from "@/hooks/use-live-prices";
-import { OrderModal } from "@/components/paper-trading/order-modal";
 import { formatPrice } from "@/lib/format";
 import { AdUnit } from "@/components/ads/ad-unit";
 
@@ -96,107 +95,6 @@ export default function RecommendationsPage() {
   const [sortKey, setSortKey] = useState<"confidence" | "expected" | "change" | null>("confidence");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
-  // Paper trading state
-  const [orderTarget, setOrderTarget] = useState<any>(null);
-  const [paperAccountId, setPaperAccountId] = useState<number | null>(null);
-  const [paperCashBalance, setPaperCashBalance] = useState<number | undefined>(undefined);
-  const [buySuccess, setBuySuccess] = useState<string | null>(null);
-
-  // Sell confirmation modal state
-  const [sellConfirmTarget, setSellConfirmTarget] = useState<any>(null);
-  const [sellLoading, setSellLoading] = useState(false);
-  const [sellSuccess, setSellSuccess] = useState<string | null>(null);
-
-  const handlePaperBuy = async (rec: any, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!isAuthenticated) {
-      router.push("/auth/login");
-      return;
-    }
-    // Get or create paper account
-    try {
-      let accId = paperAccountId;
-      if (!accId) {
-        const accounts = await fetchPaperAccounts();
-        if (accounts.length > 0) {
-          accId = accounts[0].id;
-          setPaperCashBalance(accounts[0].cash_balance);
-        } else {
-          const newAcc = await createPaperAccount({ name: "기본 계좌" });
-          accId = newAcc.id;
-          setPaperCashBalance(newAcc.cash_balance ?? 100_000_000);
-        }
-        setPaperAccountId(accId);
-      }
-      setOrderTarget({ ...rec, accountId: accId });
-    } catch (err: any) {
-      if (err?.message?.includes("401")) {
-        router.push("/auth/login");
-      }
-    }
-  };
-
-  const handlePaperSell = async (rec: any, e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (!isAuthenticated) {
-      router.push("/auth/login");
-      return;
-    }
-    try {
-      let accId = paperAccountId;
-      if (!accId) {
-        const accounts = await fetchPaperAccounts();
-        if (accounts.length > 0) {
-          accId = accounts[0].id;
-          setPaperCashBalance(accounts[0].cash_balance);
-        } else {
-          alert("모의투자 계좌가 없습니다. 먼저 계좌를 생성해주세요.");
-          return;
-        }
-        setPaperAccountId(accId);
-      }
-      // Check if user holds this position
-      const positions = await fetchPaperPositions(accId!);
-      const pos = (positions as any[]).find((p: any) => p.ticker === rec.ticker);
-      if (!pos) {
-        alert("보유 중인 종목이 아닙니다");
-        return;
-      }
-      setSellConfirmTarget({ ...rec, accountId: accId, position: pos });
-    } catch (err: any) {
-      if (err?.message?.includes("401")) {
-        router.push("/auth/login");
-      }
-    }
-  };
-
-  const handleSellConfirm = async () => {
-    if (!sellConfirmTarget) return;
-    setSellLoading(true);
-    try {
-      const pos = sellConfirmTarget.position;
-      const lp = prices.get(sellConfirmTarget.ticker);
-      const sellPrice = lp?.live_price ?? sellConfirmTarget.current_price;
-      await executePaperSell({
-        account_id: sellConfirmTarget.accountId,
-        ticker: sellConfirmTarget.ticker,
-        quantity: pos.quantity,
-        price: sellPrice,
-      });
-      setSellSuccess(sellConfirmTarget.ticker);
-      setSellConfirmTarget(null);
-      setTimeout(() => setSellSuccess(null), 2000);
-    } catch (err: any) {
-      if (err?.message?.includes("401")) {
-        router.push("/auth/login");
-      } else {
-        alert("매도 실패: " + (err?.message ?? "알 수 없는 오류"));
-      }
-    } finally {
-      setSellLoading(false);
-    }
-  };
-
   const handleSortClick = (key: "confidence" | "expected" | "change") => {
     if (sortKey === key) {
       if (sortDir === "asc") {
@@ -212,7 +110,7 @@ export default function RecommendationsPage() {
     }
   };
 
-  const handleSave = async (rec: any, e: React.MouseEvent) => {
+  const handlePin = async (rec: any, e: React.MouseEvent) => {
     e.stopPropagation();
     if (!isAuthenticated) {
       router.push("/auth/login");
@@ -221,6 +119,7 @@ export default function RecommendationsPage() {
     setSavingTicker(rec.ticker);
     setSaveError(null);
     try {
+      // 먼저 분석 저장 (이미 있으면 업데이트)
       const [scoreRes, finRes] = await Promise.all([
         fetchScore(rec.ticker, rec.market),
         fetchFinancials(rec.ticker, rec.market),
@@ -239,6 +138,8 @@ export default function RecommendationsPage() {
         score_data: sc,
         financials_data: fin ?? {},
       });
+      // 핀 토글
+      await togglePinAnalysis(rec.ticker);
       setSavedTickers((prev) => new Set(prev).add(rec.ticker));
       setTimeout(() => setSavedTickers((prev) => {
         const next = new Set(prev);
@@ -518,29 +419,11 @@ export default function RecommendationsPage() {
                       )}
                     </Link>
                     <div className="flex items-center gap-2">
-                      {rec.action === "BUY" && (
-                        <button
-                          onClick={(e) => handlePaperBuy(rec, e)}
-                          className="px-2 py-1 rounded text-xs bg-green-600/20 text-green-400 hover:bg-green-600/30 transition-colors"
-                          title="모의 매수"
-                        >
-                          {buySuccess === rec.ticker ? "완료!" : "모의매수"}
-                        </button>
-                      )}
-                      {rec.action === "SELL" && (
-                        <button
-                          onClick={(e) => handlePaperSell(rec, e)}
-                          className="px-2 py-1 rounded text-xs bg-red-600/20 text-red-400 hover:bg-red-600/30 transition-colors"
-                          title="모의 매도"
-                        >
-                          {sellSuccess === rec.ticker ? "완료!" : "모의매도"}
-                        </button>
-                      )}
                       <button
-                        onClick={(e) => handleSave(rec, e)}
+                        onClick={(e) => handlePin(rec, e)}
                         disabled={savingTicker === rec.ticker}
                         className="p-1.5 rounded hover:bg-[var(--surface-active)] transition-colors"
-                        title="내 분석 기록에 저장"
+                        title="핀 고정"
                       >
                         {savingTicker === rec.ticker ? (
                           <svg className="w-4 h-4 animate-spin text-[var(--muted)]" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
@@ -549,7 +432,7 @@ export default function RecommendationsPage() {
                         ) : savedTickers.has(rec.ticker) ? (
                           <svg className="w-4 h-4 text-green-400" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
                         ) : (
-                          <svg className="w-4 h-4 text-[var(--muted)]" viewBox="0 0 20 20" fill="currentColor"><path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v14l-5-2.5L5 18V4z" /></svg>
+                          <span className="text-sm">&#128204;</span>
                         )}
                       </button>
                       <span
@@ -758,42 +641,22 @@ export default function RecommendationsPage() {
                         </td>
                         <td className="p-4" style={{ color: "#f87171" }}>{formatPrice(rec.stop_loss, rec.market)}</td>
                         <td className="p-4">
-                          <div className="flex items-center gap-1">
-                            {rec.action === "BUY" && (
-                              <button
-                                onClick={(e) => handlePaperBuy(rec, e)}
-                                className="px-2 py-1 rounded text-xs bg-green-600/20 text-green-400 hover:bg-green-600/30 transition-colors"
-                                title="모의 매수"
-                              >
-                                {buySuccess === rec.ticker ? "완료!" : "모의매수"}
-                              </button>
+                          <button
+                            onClick={(e) => handlePin(rec, e)}
+                            disabled={savingTicker === rec.ticker}
+                            className="p-1.5 rounded hover:bg-[var(--surface-active)] transition-colors"
+                            title="핀 고정"
+                          >
+                            {savingTicker === rec.ticker ? (
+                              <svg className="w-4 h-4 animate-spin text-[var(--muted)]" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                            ) : saveError === rec.ticker ? (
+                              <svg className="w-4 h-4 text-red-400" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
+                            ) : savedTickers.has(rec.ticker) ? (
+                              <svg className="w-4 h-4 text-green-400" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
+                            ) : (
+                              <span className="text-sm">&#128204;</span>
                             )}
-                            {rec.action === "SELL" && (
-                              <button
-                                onClick={(e) => handlePaperSell(rec, e)}
-                                className="px-2 py-1 rounded text-xs bg-red-600/20 text-red-400 hover:bg-red-600/30 transition-colors"
-                                title="모의 매도"
-                              >
-                                {sellSuccess === rec.ticker ? "완료!" : "모의매도"}
-                              </button>
-                            )}
-                            <button
-                              onClick={(e) => handleSave(rec, e)}
-                              disabled={savingTicker === rec.ticker}
-                              className="p-1.5 rounded hover:bg-[var(--surface-active)] transition-colors"
-                              title="내 분석 기록에 저장"
-                            >
-                              {savingTicker === rec.ticker ? (
-                                <svg className="w-4 h-4 animate-spin text-[var(--muted)]" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
-                              ) : saveError === rec.ticker ? (
-                                <svg className="w-4 h-4 text-red-400" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
-                              ) : savedTickers.has(rec.ticker) ? (
-                                <svg className="w-4 h-4 text-green-400" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" /></svg>
-                              ) : (
-                                <svg className="w-4 h-4 text-[var(--muted)]" viewBox="0 0 20 20" fill="currentColor"><path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v14l-5-2.5L5 18V4z" /></svg>
-                              )}
-                            </button>
-                          </div>
+                          </button>
                         </td>
                       </tr>
                       {expandedRow === i && rec.reasoning && (
@@ -839,74 +702,6 @@ export default function RecommendationsPage() {
         </>
       )}
 
-      {/* Paper Trading Order Modal */}
-      {orderTarget && (
-        <OrderModal
-          isOpen={!!orderTarget}
-          onClose={() => setOrderTarget(null)}
-          onSuccess={() => {
-            setBuySuccess(orderTarget.ticker);
-            setTimeout(() => setBuySuccess(null), 2000);
-          }}
-          accountId={orderTarget.accountId}
-          ticker={orderTarget.ticker}
-          name={orderTarget.name}
-          market={orderTarget.market}
-          price={orderTarget.current_price}
-          cashBalance={paperCashBalance}
-          source="recommendation"
-          recommendationId={orderTarget.id}
-          recommendationAction={orderTarget.action}
-          recommendationConfidence={orderTarget.confidence}
-          recommendationGrade={orderTarget.grade}
-        />
-      )}
-
-      {/* Sell Confirmation Modal */}
-      {sellConfirmTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[var(--overlay)]" onClick={() => setSellConfirmTarget(null)}>
-          <div
-            className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-6 w-full max-w-sm mx-4 space-y-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="text-lg font-bold">모의 매도 확인</h3>
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-[var(--muted)]">종목</span>
-                <span className="font-medium">{sellConfirmTarget.name} ({sellConfirmTarget.ticker})</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-[var(--muted)]">보유수량</span>
-                <span className="font-medium">{sellConfirmTarget.position.quantity}주</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-[var(--muted)]">매도가</span>
-                <span className="font-medium">
-                  {formatPrice(
-                    prices.get(sellConfirmTarget.ticker)?.live_price ?? sellConfirmTarget.current_price,
-                    sellConfirmTarget.market,
-                  )}
-                </span>
-              </div>
-            </div>
-            <div className="flex gap-3 pt-2">
-              <button
-                onClick={() => setSellConfirmTarget(null)}
-                className="flex-1 px-4 py-2 rounded text-sm border border-[var(--card-border)] text-[var(--muted)] hover:bg-[var(--surface-hover)] transition-colors"
-              >
-                취소
-              </button>
-              <button
-                onClick={handleSellConfirm}
-                disabled={sellLoading}
-                className="flex-1 px-4 py-2 rounded text-sm bg-red-600 text-white hover:bg-red-700 transition-colors disabled:opacity-50"
-              >
-                {sellLoading ? "처리 중..." : "전량 매도"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

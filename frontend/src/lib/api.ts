@@ -149,25 +149,6 @@ export async function logoutAPI() {
   _accessToken = null;
 }
 
-// --- Watchlist API (authenticated, direct to backend) ---
-
-export async function fetchWatchlistAPI() {
-  return fetchWithAuth("/api/watchlist");
-}
-
-export async function addToWatchlistAPI(item: Record<string, unknown>) {
-  return fetchWithAuth("/api/watchlist", {
-    method: "POST",
-    body: JSON.stringify(item),
-  });
-}
-
-export async function removeFromWatchlistAPI(ticker: string) {
-  return fetchWithAuth(`/api/watchlist/${ticker}`, {
-    method: "DELETE",
-  });
-}
-
 // --- Saved Analyses API (authenticated, direct to backend) ---
 
 export async function fetchSavedAnalyses(params?: {
@@ -175,6 +156,7 @@ export async function fetchSavedAnalyses(params?: {
   signal?: string;
   market?: string;
   grade?: string;
+  pinned?: boolean;
   sort_by?: string;
   order?: string;
   latest_only?: boolean;
@@ -184,6 +166,7 @@ export async function fetchSavedAnalyses(params?: {
   if (params?.signal) qs.set("signal", params.signal);
   if (params?.market) qs.set("market", params.market);
   if (params?.grade) qs.set("grade", params.grade);
+  if (params?.pinned !== undefined) qs.set("pinned", String(params.pinned));
   if (params?.sort_by) qs.set("sort_by", params.sort_by);
   if (params?.order) qs.set("order", params.order);
   if (params?.latest_only !== undefined) qs.set("latest_only", String(params.latest_only));
@@ -232,6 +215,36 @@ export async function updateAnalysisMemo(id: number, memo: string | null) {
     method: "PUT",
     body: JSON.stringify({ memo }),
   });
+}
+
+// --- Pin (즐겨찾기) API ---
+
+export interface PinnedAnalysis {
+  id: number;
+  ticker: string;
+  name: string;
+  market: string;
+  signal: string;
+  grade: string;
+  confidence: number;
+  current_price: number;
+  total_score: number;
+  entry_price: number | null;
+  target_price: number | null;
+  stop_loss: number | null;
+  risk_reward: number | null;
+  analyzed_at: string;
+  is_pinned: boolean;
+}
+
+export async function togglePinAnalysis(ticker: string): Promise<{ ticker: string; is_pinned: boolean }> {
+  return fetchWithAuth(`/api/saved-analyses/${ticker}/pin`, {
+    method: "PUT",
+  });
+}
+
+export async function fetchPinnedAnalyses(): Promise<PinnedAnalysis[]> {
+  return fetchWithAuth("/api/saved-analyses/pinned");
 }
 
 // --- Public API (proxied through Next.js) ---
@@ -760,4 +773,172 @@ export function subscribePipelineStream(
   };
 
   return () => es.close();
+}
+
+// --- Portfolio API (authenticated, direct to backend) ---
+
+export interface Portfolio {
+  id: number;
+  name: string;
+  holding_count: number;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface PortfolioHolding {
+  id: number;
+  ticker: string;
+  name: string;
+  market: string;
+  quantity: number;
+  avg_buy_price: number;
+  currency: string;
+  current_price: number;
+  exchange_rate: number | null;
+  invested: number;
+  eval_amount: number;
+  pnl: number;
+  pnl_pct: number;
+  added_at: string | null;
+}
+
+export interface ConfidenceAdjustment {
+  factor: string;
+  delta: string;
+}
+
+export interface SignalFactor {
+  name: string;
+  strength: number;
+  weight: number;
+  contribution: number;
+}
+
+export interface HoldingAnalysis {
+  ticker: string;
+  name: string;
+  market: string;
+  quantity: number;
+  avg_buy_price: number;
+  current_price: number;
+  currency: string;
+  exchange_rate: number | null;
+  invested: number;
+  eval_amount: number;
+  pnl: number;
+  pnl_pct: number;
+  grade: string;
+  total_score: number;
+  signal: string;
+  confidence: number;
+  sector: string;
+  confidence_adjustments: ConfidenceAdjustment[];
+  signal_factors: SignalFactor[];
+  rsi: number;
+  trend: string;
+  trend_strength: number;
+  summary: string[];
+}
+
+export interface PortfolioReport {
+  portfolio_id: number;
+  generated_at: string;
+  summary: {
+    total_invested: number;
+    total_eval: number;
+    total_pnl: number;
+    total_pnl_pct: number;
+    holding_count: number;
+    grade_distribution: Record<string, number>;
+    signal_distribution: Record<string, number>;
+    sector_distribution: Record<string, number>;
+  };
+  holdings: HoldingAnalysis[];
+  comment: {
+    overall_assessment: string;
+    key_risks: string[];
+    action_items: string[];
+    holding_comments?: Record<string, string>;
+    risk_level: string;
+  };
+}
+
+export async function fetchPortfolios(): Promise<Portfolio[]> {
+  return fetchWithAuth("/api/portfolio");
+}
+
+export async function createPortfolio(name?: string): Promise<{ id: number; name: string; created_at: string | null }> {
+  return fetchWithAuth("/api/portfolio", {
+    method: "POST",
+    body: JSON.stringify({ name: name || "내 포트폴리오" }),
+  });
+}
+
+export async function deletePortfolio(id: number): Promise<{ ok: boolean }> {
+  return fetchWithAuth(`/api/portfolio/${id}`, { method: "DELETE" });
+}
+
+export async function fetchPortfolioHoldings(portfolioId: number): Promise<PortfolioHolding[]> {
+  return fetchWithAuth(`/api/portfolio/${portfolioId}/holdings`);
+}
+
+export async function addPortfolioHolding(portfolioId: number, data: {
+  ticker: string;
+  name: string;
+  market: string;
+  quantity: number;
+  avg_buy_price: number;
+  currency?: string;
+}): Promise<{ id: number; ticker: string; name: string; updated: boolean }> {
+  return fetchWithAuth(`/api/portfolio/${portfolioId}/holdings`, {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deletePortfolioHolding(portfolioId: number, holdingId: number): Promise<{ ok: boolean }> {
+  return fetchWithAuth(`/api/portfolio/${portfolioId}/holdings/${holdingId}`, { method: "DELETE" });
+}
+
+export async function generatePortfolioReport(portfolioId: number): Promise<{ success: boolean; data: PortfolioReport; cached: boolean }> {
+  return fetchWithAuth(`/api/portfolio/${portfolioId}/report`, { method: "POST" });
+}
+
+export async function fetchPortfolioReport(portfolioId: number): Promise<{ success: boolean; data?: PortfolioReport; cached?: boolean; message?: string }> {
+  return fetchWithAuth(`/api/portfolio/${portfolioId}/report`);
+}
+
+export async function fetchReportLimit(): Promise<{ remaining: number; limit: number }> {
+  return fetchWithAuth("/api/portfolio/report-limit");
+}
+
+export async function enrichHoldings(holdings: {
+  ticker: string;
+  name: string;
+  market: string;
+  quantity: number;
+  avg_buy_price: number;
+  currency: string;
+}[]): Promise<PortfolioHolding[]> {
+  const res = await fetch(`${BACKEND_URL}/api/portfolio/enrich-holdings`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ holdings }),
+  });
+  if (!res.ok) throw new Error(`API Error: ${res.status}`);
+  return res.json();
+}
+
+export async function generateAdhocReport(holdings: {
+  ticker: string;
+  name: string;
+  market: string;
+  quantity: number;
+  avg_buy_price: number;
+  currency: string;
+}[]): Promise<{ success: boolean; data: PortfolioReport; cached: boolean }> {
+  return fetchWithAuth("/api/portfolio/report-adhoc", {
+    method: "POST",
+    body: JSON.stringify({ holdings }),
+  });
 }

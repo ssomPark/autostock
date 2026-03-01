@@ -27,7 +27,7 @@ export default function LoginPage() {
       <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-8 w-full max-w-sm space-y-6">
         <div className="text-center">
           <h1 className="text-2xl font-bold">TradeRadar</h1>
-          <p className="text-sm text-[var(--muted)] mt-1">로그인하여 워치리스트를 동기화하세요</p>
+          <p className="text-sm text-[var(--muted)] mt-1">로그인하여 분석 기록을 저장하세요</p>
         </div>
 
         <div className="space-y-3">
@@ -49,6 +49,19 @@ export default function LoginPage() {
         <p className="text-xs text-center text-[var(--muted)]">
           로그인 없이도 분석 기능은 사용할 수 있습니다
         </p>
+
+        <div className="border-t border-[var(--card-border)] pt-4 space-y-2">
+          <p className="text-[10px] font-semibold text-[var(--muted)] text-center">로그인 시 서버에 저장되는 정보</p>
+          <ul className="text-[10px] text-[var(--muted)] space-y-0.5 list-disc list-inside">
+            <li>Google 계정 이메일, 이름, 프로필 사진</li>
+            <li>분석 기록 (핀 고정 포함), 메모</li>
+            <li>포트폴리오</li>
+            <li>모의 투자 계좌, 거래 내역</li>
+          </ul>
+          <p className="text-[10px] text-[var(--muted)] leading-relaxed">
+            비밀번호는 저장되지 않습니다.
+          </p>
+        </div>
       </div>
     </div>
   );

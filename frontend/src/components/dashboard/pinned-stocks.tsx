@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import Link from "next/link";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getWatchlist, getWatchlistSync, removeFromWatchlist, type WatchlistItem } from "@/lib/watchlist";
+import Link from "next/link";
+import { fetchPinnedAnalyses, togglePinAnalysis, type PinnedAnalysis } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { formatPrice } from "@/lib/format";
 import { useLivePrices } from "@/hooks/use-live-prices";
@@ -29,71 +28,55 @@ function formatPct(value: number | null | undefined): React.ReactNode {
   );
 }
 
-export function Watchlist() {
+export function PinnedStocks() {
   const { isAuthenticated } = useAuth();
   const queryClient = useQueryClient();
 
-  // Server-backed watchlist when logged in
-  const { data: serverItems } = useQuery({
-    queryKey: ["watchlist"],
-    queryFn: () => getWatchlist(),
+  const { data: items = [] } = useQuery({
+    queryKey: ["pinned-analyses"],
+    queryFn: fetchPinnedAnalyses,
     enabled: isAuthenticated,
   });
 
-  // localStorage fallback when not logged in
-  const [localItems, setLocalItems] = useState<WatchlistItem[]>([]);
-  useEffect(() => {
-    if (!isAuthenticated) {
-      setLocalItems(getWatchlistSync());
-      const handler = () => setLocalItems(getWatchlistSync());
-      window.addEventListener("watchlist-updated", handler);
-      return () => window.removeEventListener("watchlist-updated", handler);
-    }
-  }, [isAuthenticated]);
-
-  const items = isAuthenticated ? (serverItems ?? []) : localItems;
-
-  // 실시간 가격 조회 (워치리스트에 종목이 있을 때만)
   const { prices, isLoading: pricesLoading } = useLivePrices({
     market: "all",
     enabled: items.length > 0,
   });
 
-  const handleRemove = async (ticker: string) => {
-    await removeFromWatchlist(ticker);
-    if (isAuthenticated) {
-      queryClient.invalidateQueries({ queryKey: ["watchlist"] });
-    } else {
-      setLocalItems(getWatchlistSync());
-    }
+  const handleUnpin = async (ticker: string) => {
+    await togglePinAnalysis(ticker);
+    queryClient.invalidateQueries({ queryKey: ["pinned-analyses"] });
+    queryClient.invalidateQueries({ queryKey: ["saved-analyses"] });
   };
 
-  if (items.length === 0) return null;
+  if (!isAuthenticated || items.length === 0) return null;
 
   return (
     <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg">
       <div className="p-4 border-b border-[var(--card-border)]">
-        <h2 className="font-semibold">내 분석 종목</h2>
+        <h2 className="font-semibold flex items-center gap-2">
+          <span className="text-base">&#128204;</span>
+          핀 고정 종목
+        </h2>
       </div>
+
       <div className="p-2">
-        {items.map((item) => {
+        {items.map((item: PinnedAnalysis) => {
           const actionColor =
-            item.action === "BUY" ? "#4ade80" : item.action === "SELL" ? "#f87171" : "#facc15";
+            item.signal === "BUY" ? "#4ade80" : item.signal === "SELL" ? "#f87171" : "#facc15";
           const actionBg =
-            item.action === "BUY"
+            item.signal === "BUY"
               ? "rgba(34,197,94,0.2)"
-              : item.action === "SELL"
+              : item.signal === "SELL"
                 ? "rgba(239,68,68,0.2)"
                 : "rgba(234,179,8,0.2)";
           const actionLabel =
-            item.action === "BUY" ? "매수" : item.action === "SELL" ? "매도" : "관망";
+            item.signal === "BUY" ? "매수" : item.signal === "SELL" ? "매도" : "관망";
 
-          // 실시간 가격 데이터
           const lp = prices.get(item.ticker);
           const livePrice = lp?.live_price ?? null;
           const dayChangePct = lp?.day_change_pct ?? null;
 
-          // 분석 당시 가격 대비 변동률
           const changeFromAnalysis =
             livePrice && item.current_price > 0
               ? ((livePrice - item.current_price) / item.current_price) * 100
@@ -121,7 +104,6 @@ export function Watchlist() {
                   <span className="text-[var(--muted)] text-xs">{item.ticker}</span>
                 </Link>
                 <div className="flex items-center gap-2">
-                  {/* 일간 등락률 */}
                   {dayChangePct != null && (
                     <span
                       className="text-xs font-medium"
@@ -136,7 +118,6 @@ export function Watchlist() {
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                     </svg>
                   )}
-                  {/* Grade badge */}
                   <span
                     className="px-1.5 py-0.5 rounded text-xs font-bold"
                     style={{ color: gradeColor[grade] || "#9ca3af" }}
@@ -150,11 +131,11 @@ export function Watchlist() {
                     {actionLabel}
                   </span>
                   <button
-                    onClick={() => handleRemove(item.ticker)}
-                    className="text-[var(--muted)] hover:text-red-400 text-xs transition-colors ml-1"
-                    title="삭제"
+                    onClick={() => handleUnpin(item.ticker)}
+                    className="text-[var(--muted)] hover:text-amber-400 text-sm transition-colors ml-1"
+                    title="핀 해제"
                   >
-                    X
+                    &#128204;
                   </button>
                 </div>
               </div>
@@ -166,13 +147,11 @@ export function Watchlist() {
                       ? formatPrice(livePrice, item.market)
                       : formatPrice(item.current_price, item.market)}
                   </p>
-                  {livePrice && (
-                    <p className="text-[10px] mt-0.5" style={{ color: "var(--muted)" }}>
-                      {dayChangePct != null && (
-                        <span style={{ color: dayChangePct >= 0 ? "#4ade80" : "#f87171" }}>
-                          {dayChangePct >= 0 ? "+" : ""}{dayChangePct.toFixed(2)}%
-                        </span>
-                      )}
+                  {livePrice && dayChangePct != null && (
+                    <p className="text-[10px] mt-0.5">
+                      <span style={{ color: dayChangePct >= 0 ? "#4ade80" : "#f87171" }}>
+                        {dayChangePct >= 0 ? "+" : ""}{dayChangePct.toFixed(2)}%
+                      </span>
                     </p>
                   )}
                 </div>
@@ -193,7 +172,7 @@ export function Watchlist() {
                 </div>
                 <div>
                   <span className="text-[var(--muted)]">
-                    {item.action === "SELL" ? "재매수 검토가" : "매수 추천가"}
+                    {item.signal === "SELL" ? "재매수 검토가" : "매수 추천가"}
                   </span>
                   <p className="font-medium mt-0.5" style={{ color: "#60a5fa" }}>
                     {formatPrice(item.entry_price, item.market)}

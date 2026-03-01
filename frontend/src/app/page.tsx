@@ -8,7 +8,7 @@ import { SignalSummary } from "@/components/dashboard/signal-summary";
 import { RecommendationList } from "@/components/dashboard/recommendation-list";
 import { RecentNews } from "@/components/dashboard/recent-news";
 import { PipelineStatus } from "@/components/dashboard/pipeline-status";
-import { Watchlist } from "@/components/dashboard/watchlist";
+import { PinnedStocks } from "@/components/dashboard/pinned-stocks";
 import { fetchDashboardSummary } from "@/lib/api";
 import { AdUnit } from "@/components/ads/ad-unit";
 
@@ -58,6 +58,12 @@ const features = [
     free: false,
   },
   {
+    icon: "📑",
+    title: "포트폴리오 분석",
+    desc: "보유 종목을 등록하면 AI가 종합 리포트와 리스크 분석을 생성합니다.",
+    free: false,
+  },
+  {
     icon: "⚡",
     title: "무제한 분석",
     desc: "비로그인 시 하루 5회 → 로그인 시 무제한 분석이 가능합니다.",
@@ -73,7 +79,8 @@ const comparisonRows = [
   { feature: "모의 투자", guest: "✗", member: "✓" },
   { feature: "분석 저장", guest: "✗", member: "✓" },
   { feature: "종목 비교", guest: "✗", member: "✓" },
-  { feature: "워치리스트", guest: "로컬 저장", member: "클라우드 동기화" },
+  { feature: "포트폴리오 분석", guest: "✗", member: "✓ (일 5회)" },
+  { feature: "핀 고정 (즐겨찾기)", guest: "\u2717", member: "\u2713" },
 ];
 
 /* ──────────────────────────── Welcome Page ──────────────────────────── */
@@ -115,6 +122,10 @@ function WelcomePage({ onLogin }: { onLogin: () => void }) {
             로그인 없이 둘러보기 →
           </Link>
         </div>
+        <p className="text-[10px] text-[var(--muted)] max-w-md mx-auto pt-2 leading-relaxed">
+          로그인 시 이메일·이름·프로필 사진, 분석 기록, 포트폴리오, 모의 투자 내역이 서버에 저장됩니다.
+          비밀번호는 저장되지 않습니다.
+        </p>
       </section>
 
       {/* Feature Cards */}
@@ -209,6 +220,10 @@ function WelcomePage({ onLogin }: { onLogin: () => void }) {
             로그인 없이 둘러보기 →
           </Link>
         </div>
+        <p className="text-[10px] text-[var(--muted)] max-w-md mx-auto leading-relaxed">
+          로그인 시 이메일·이름·프로필 사진, 분석 기록, 포트폴리오, 모의 투자 내역이 저장됩니다.
+          비밀번호는 저장하지 않습니다.
+        </p>
       </section>
     </div>
   );
@@ -233,7 +248,7 @@ function Dashboard() {
         <SignalSummary label="관망" count={summary?.hold_count ?? 0} color="hold" />
         <PipelineStatus />
       </div>
-      <Watchlist />
+      <PinnedStocks />
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
           <RecommendationList />

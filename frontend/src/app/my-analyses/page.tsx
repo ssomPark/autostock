@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import {
@@ -10,6 +10,7 @@ import {
   fetchSavedAnalysesStats,
   fetchAnalysisPerformance,
   updateAnalysisMemo,
+  togglePinAnalysis,
 } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { formatPrice } from "@/lib/format";
@@ -277,6 +278,7 @@ export default function MyAnalysesPage() {
   const [signalFilter, setSignalFilter] = useState("all");
   const [marketFilter, setMarketFilter] = useState("all");
   const [gradeFilter, setGradeFilter] = useState("all");
+  const [pinnedFilter, setPinnedFilter] = useState("all");
   const [sortBy, setSortBy] = useState("analyzed_at");
   const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc");
 
@@ -343,6 +345,7 @@ export default function MyAnalysesPage() {
     if (signalFilter !== "all") items = items.filter((a: any) => a.signal === signalFilter);
     if (marketFilter !== "all") items = items.filter((a: any) => a.market === marketFilter);
     if (gradeFilter !== "all") items = items.filter((a: any) => a.grade === gradeFilter);
+    if (pinnedFilter === "pinned") items = items.filter((a: any) => a.is_pinned);
 
     items.sort((a: any, b: any) => {
       let va = a[sortBy], vb = b[sortBy];
@@ -358,7 +361,45 @@ export default function MyAnalysesPage() {
     });
 
     return items;
-  }, [analyses, searchQuery, signalFilter, marketFilter, gradeFilter, sortBy, sortOrder]);
+  }, [analyses, searchQuery, signalFilter, marketFilter, gradeFilter, pinnedFilter, sortBy, sortOrder]);
+
+  // 핀 토스트 메시지
+  const [pinToast, setPinToast] = useState<{ text: string; key: number } | null>(null);
+
+  // 핀 토글 mutation (낙관적 업데이트)
+  const pinMutation = useMutation({
+    mutationFn: (ticker: string) => togglePinAnalysis(ticker),
+    onMutate: async (ticker) => {
+      await queryClient.cancelQueries({ queryKey: ["saved-analyses"] });
+      const prev = queryClient.getQueryData<any[]>(["saved-analyses"]);
+      if (prev) {
+        queryClient.setQueryData(["saved-analyses"], prev.map((a: any) =>
+          a.ticker === ticker ? { ...a, is_pinned: !a.is_pinned } : a
+        ));
+      }
+      return { prev };
+    },
+    onSuccess: (_data, ticker) => {
+      const updated = queryClient.getQueryData<any[]>(["saved-analyses"]);
+      const item = updated?.find((a: any) => a.ticker === ticker);
+      const pinned = item?.is_pinned;
+      setPinToast({ text: pinned ? "📌 핀 고정됨" : "핀 해제됨", key: Date.now() });
+      queryClient.invalidateQueries({ queryKey: ["saved-analyses"] });
+      queryClient.invalidateQueries({ queryKey: ["pinned-analyses"] });
+    },
+    onError: (_err, _ticker, context) => {
+      if (context?.prev) queryClient.setQueryData(["saved-analyses"], context.prev);
+      setPinToast({ text: "핀 변경 실패", key: Date.now() });
+    },
+  });
+
+  // 토스트 자동 제거
+  useEffect(() => {
+    if (pinToast) {
+      const t = setTimeout(() => setPinToast(null), 1800);
+      return () => clearTimeout(t);
+    }
+  }, [pinToast]);
 
   // Mutations
   const deleteMutation = useMutation({
@@ -543,6 +584,7 @@ export default function MyAnalysesPage() {
           <FilterGroup label="신호" options={SIGNAL_OPTIONS} value={signalFilter} onChange={setSignalFilter} />
           <FilterGroup label="시장" options={MARKET_OPTIONS} value={marketFilter} onChange={setMarketFilter} />
           <FilterGroup label="등급" options={GRADE_OPTIONS} value={gradeFilter} onChange={setGradeFilter} />
+          <FilterGroup label="핀" options={[{ value: "all", label: "전체" }, { value: "pinned", label: "핀 고정" }]} value={pinnedFilter} onChange={setPinnedFilter} />
         </div>
       </div>
 
@@ -632,6 +674,18 @@ export default function MyAnalysesPage() {
                     <span className="px-2 py-0.5 rounded text-xs font-medium" style={{ backgroundColor: actionBg, color: actionColor }}>
                       {actionLabel}
                     </span>
+                    <button
+                      onClick={() => pinMutation.mutate(item.ticker)}
+                      disabled={pinMutation.isPending && pinMutation.variables === item.ticker}
+                      className={`relative text-sm transition-all duration-200 ${
+                        item.is_pinned
+                          ? "text-amber-400 scale-110"
+                          : "text-[var(--muted)] hover:text-amber-400 hover:scale-110"
+                      } ${pinMutation.isPending && pinMutation.variables === item.ticker ? "animate-pulse opacity-60" : ""}`}
+                      title={item.is_pinned ? "핀 해제" : "핀 고정"}
+                    >
+                      📌
+                    </button>
                     <Link
                       href={`/my-analyses/${item.ticker}`}
                       className="text-xs text-[var(--muted)] hover:text-blue-400 transition-colors"
@@ -742,6 +796,17 @@ export default function MyAnalysesPage() {
           onConfirm={confirmDelete}
           onCancel={() => { setShowDeleteModal(false); setSingleDeleteId(null); }}
         />
+      )}
+
+      {/* ─── 핀 토스트 ─── */}
+      {pinToast && (
+        <div
+          key={pinToast.key}
+          style={{ animation: "fadeInUp 0.25s ease-out" }}
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-[var(--card)] border border-[var(--card-border)] shadow-lg text-sm font-medium"
+        >
+          {pinToast.text}
+        </div>
       )}
     </div>
   );

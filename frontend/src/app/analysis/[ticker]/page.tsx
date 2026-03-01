@@ -3,9 +3,8 @@
 import { use, useState, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
-import { fetchFinancials, fetchScore, saveAnalysisAPI, RateLimitError, getAnalysisRemaining, getAnalysisResetSeconds } from "@/lib/api";
+import { fetchFinancials, fetchScore, saveAnalysisAPI, RateLimitError, getAnalysisRemaining, getAnalysisResetSeconds, togglePinAnalysis, fetchSavedAnalysis } from "@/lib/api";
 import { CandlestickChart } from "@/components/charts/candlestick-chart";
-import { addToWatchlist, isInWatchlist } from "@/lib/watchlist";
 import { useAuth } from "@/lib/auth-context";
 import { formatPrice } from "@/lib/format";
 import { AdUnit } from "@/components/ads/ad-unit";
@@ -140,14 +139,17 @@ export default function AnalysisPage({ params }: { params: Promise<{ ticker: str
   const queryClient = useQueryClient();
   const { isAuthenticated, login } = useAuth();
 
-  const [saved, setSaved] = useState(false);
+  const [pinned, setPinned] = useState(false);
+  const [pinLoading, setPinLoading] = useState(false);
   const [rateLimited, setRateLimited] = useState(false);
   const [remaining, setRemaining] = useState<number | null>(null);
   const [resetSeconds, setResetSeconds] = useState<number | null>(null);
 
   useEffect(() => {
-    isInWatchlist(ticker).then(setSaved);
-  }, [ticker]);
+    if (isAuthenticated) {
+      fetchSavedAnalysis(ticker).then((res: any) => setPinned(!!res?.is_pinned)).catch(() => setPinned(false));
+    }
+  }, [ticker, isAuthenticated]);
 
   const financials = useQuery({
     queryKey: ["financials", ticker, market],
@@ -278,37 +280,30 @@ export default function AnalysisPage({ params }: { params: Promise<{ ticker: str
         <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold">종합 판정</h2>
-            <button
-              onClick={async () => {
-                await addToWatchlist({
-                  ticker,
-                  name: fin?.name || ticker,
-                  market,
-                  action: sc.signal,
-                  grade: sc.grade,
-                  confidence: sc.confidence.final,
-                  current_price: sc.current_price,
-                  change_pct: fin?.change_pct ?? null,
-                  entry_price: sc.entry_price?.consensus ?? null,
-                  target_price: sc.target.consensus,
-                  stop_loss: sc.stop_loss.final,
-                  risk_reward: sc.risk_reward_ratio,
-                  added_at: new Date().toISOString(),
-                });
-                setSaved(true);
-                if (isAuthenticated) {
-                  queryClient.invalidateQueries({ queryKey: ["watchlist"] });
-                }
-              }}
-              disabled={saved}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                saved
-                  ? "bg-green-600/20 text-green-400 cursor-default"
-                  : "bg-blue-600 hover:bg-blue-700 text-white cursor-pointer"
-              }`}
-            >
-              {saved ? "추가됨" : "대시보드에 추가"}
-            </button>
+            {isAuthenticated && analysisSaved && (
+              <button
+                onClick={async () => {
+                  if (pinLoading) return;
+                  setPinLoading(true);
+                  try {
+                    const res = await togglePinAnalysis(ticker);
+                    setPinned(res.is_pinned);
+                    queryClient.invalidateQueries({ queryKey: ["pinned-analyses"] });
+                    queryClient.invalidateQueries({ queryKey: ["saved-analyses"] });
+                  } finally {
+                    setPinLoading(false);
+                  }
+                }}
+                disabled={pinLoading}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  pinned
+                    ? "bg-amber-500/20 text-amber-400 hover:bg-amber-500/30"
+                    : "bg-[var(--card)] border border-[var(--card-border)] text-[var(--muted)] hover:text-amber-400 hover:border-amber-500/50"
+                }`}
+              >
+                {pinLoading ? "..." : pinned ? "\u{1F4CC} 핀 해제" : "\u{1F4CC} 핀 고정"}
+              </button>
+            )}
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-4">

@@ -2,7 +2,6 @@
 
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from "react";
 import { setAccessToken, refreshAccessToken, fetchMe, logoutAPI } from "@/lib/api";
-import { migrateLocalToServer } from "@/lib/watchlist";
 
 interface User {
   id: number;
@@ -74,8 +73,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const me = await fetchMe();
       setUser(me);
       localStorage.setItem("tr_has_session", "1");
-      // Migrate localStorage watchlist to server
-      await migrateLocalToServer();
     } catch {
       setUser(null);
     }

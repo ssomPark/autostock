@@ -863,6 +863,7 @@ const NAV_ITEM_META: Record<string, { label: string; icon: string }> = {
   "/paper-trading": { label: "모의 투자", icon: "💰" },
   "/news": { label: "뉴스", icon: "📰" },
   "/compare": { label: "종목 비교", icon: "⚖️" },
+  "/portfolio": { label: "포트폴리오", icon: "📑" },
   "/admin": { label: "관리자", icon: "🛡️" },
 };
 

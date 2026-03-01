@@ -72,6 +72,19 @@ async def init_db() -> None:
             "ALTER TABLE saved_analyses ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()",
             "ALTER TABLE saved_analyses ADD COLUMN IF NOT EXISTS memo TEXT",
             "UPDATE saved_analyses SET created_at = analyzed_at WHERE created_at IS NULL",
+            # 핀(즐겨찾기) 기능
+            "ALTER TABLE saved_analyses ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN DEFAULT false",
+            "CREATE INDEX IF NOT EXISTS ix_saved_analyses_user_pinned ON saved_analyses(user_id, is_pinned)",
+            # 기존 워치리스트 → is_pinned 마이그레이션
+            """UPDATE saved_analyses sa
+               SET is_pinned = true
+               FROM (SELECT DISTINCT user_id, ticker FROM watchlist_items) w
+               WHERE sa.user_id = w.user_id AND sa.ticker = w.ticker
+               AND sa.id = (
+                 SELECT id FROM saved_analyses
+                 WHERE user_id = w.user_id AND ticker = w.ticker
+                 ORDER BY analyzed_at DESC LIMIT 1
+               ) AND sa.is_pinned = false""",
         ]:
             try:
                 await conn.execute(text(stmt))

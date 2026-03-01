@@ -179,6 +179,7 @@ class UserModel(Base):
     saved_analyses = relationship("SavedAnalysisModel", back_populates="user", cascade="all, delete-orphan")
     paper_accounts = relationship("PaperAccountModel", back_populates="user", cascade="all, delete-orphan")
     notifications = relationship("NotificationModel", back_populates="user", cascade="all, delete-orphan")
+    portfolios = relationship("PortfolioModel", back_populates="user", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("ix_users_provider_provider_id", "provider", "provider_id", unique=True),
@@ -229,6 +230,7 @@ class SavedAnalysisModel(Base):
     analyzed_at = Column(DateTime, default=datetime.now)
     created_at = Column(DateTime, default=datetime.now)
     memo = Column(Text, nullable=True)
+    is_pinned = Column(Boolean, default=False, server_default="false")
 
     user = relationship("UserModel", back_populates="saved_analyses")
 
@@ -236,6 +238,7 @@ class SavedAnalysisModel(Base):
         Index("ix_saved_analyses_user_id", "user_id"),
         Index("ix_saved_analyses_user_ticker", "user_id", "ticker"),
         Index("ix_saved_analyses_user_ticker_analyzed", "user_id", "ticker", "analyzed_at"),
+        Index("ix_saved_analyses_user_pinned", "user_id", "is_pinned"),
     )
 
 
@@ -434,4 +437,44 @@ class OHLCVCacheModel(Base):
     __table_args__ = (
         Index("ix_ohlcv_cache_ticker_date", "ticker", "date", unique=True),
         Index("ix_ohlcv_cache_market", "market"),
+    )
+
+
+class PortfolioModel(Base):
+    """사용자 포트폴리오."""
+    __tablename__ = "portfolios"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(100), nullable=False, default="내 포트폴리오")
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    user = relationship("UserModel", back_populates="portfolios")
+    holdings = relationship("PortfolioHoldingModel", back_populates="portfolio", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("ix_portfolios_user_id", "user_id"),
+    )
+
+
+class PortfolioHoldingModel(Base):
+    """포트폴리오 보유 종목."""
+    __tablename__ = "portfolio_holdings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    portfolio_id = Column(Integer, ForeignKey("portfolios.id", ondelete="CASCADE"), nullable=False)
+    ticker = Column(String(20), nullable=False)
+    name = Column(String(200), nullable=False)
+    market = Column(String(10), nullable=False)
+    quantity = Column(Integer, nullable=False, default=0)
+    avg_buy_price = Column(Float, nullable=False, default=0.0)
+    currency = Column(String(10), nullable=False, default="KRW")
+    added_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    portfolio = relationship("PortfolioModel", back_populates="holdings")
+
+    __table_args__ = (
+        Index("ix_portfolio_holdings_portfolio_ticker", "portfolio_id", "ticker", unique=True),
     )
