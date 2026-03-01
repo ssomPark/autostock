@@ -1,9 +1,13 @@
 """Admin dashboard API routes."""
 
+import json
+import logging
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, select
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
+from sqlalchemy import func, select, and_, extract
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -12,14 +16,18 @@ from src.config.settings import settings
 from src.db.database import get_async_session
 from src.models.db_models import (
     AdRewardLogModel,
+    EventStockModel,
     MarketEventModel,
     PaperAccountModel,
     PaperTradeModel,
     PipelineRunModel,
     SavedAnalysisModel,
+    SiteSettingModel,
     UserModel,
     WatchlistItemModel,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -469,6 +477,227 @@ async def list_events_admin(
     }
 
 
+class AutoGenerateBody(BaseModel):
+    year: int
+    month: int
+    market: str = "ALL"  # KR | US | ALL
+
+
+@router.post("/events/auto-generate")
+async def auto_generate_events(
+    body: AutoGenerateBody,
+    _=Depends(get_admin_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """OpenAI를 호출하여 특정 월의 주요 시장 이벤트를 자동 생성."""
+    if not settings.openai_api_key:
+        raise HTTPException(status_code=400, detail="OpenAI API 키가 설정되지 않았습니다.")
+
+    market_label = {"KR": "한국", "US": "미국", "ALL": "한국 및 미국"}.get(body.market, "한국 및 미국")
+
+    prompt = f"""당신은 주식 시장 이벤트 분석가입니다.
+{body.year}년 {body.month}월 {market_label} 주식시장의 주요 이벤트를 분석해주세요.
+
+## 필수 검증 규칙 (반드시 준수)
+
+1. **IPO 이벤트**: 이미 상장된 기업을 IPO로 등록하지 마세요.
+   - 카카오, 카카오페이, 카카오게임즈, 네이버, 핀터레스트, 쿠팡 등은 이미 상장된 기업입니다.
+   - IPO 이벤트는 실제로 상장이 예정된 기업만 포함하세요.
+   - 확실하지 않으면 IPO 카테고리를 아예 포함하지 마세요.
+
+2. **FOMC 금리 결정**: 연 8회 고정 일정입니다. 해당 월에 FOMC가 없으면 포함하지 마세요.
+   - 2026년 FOMC 예상 일정: 1/28, 3/18, 5/6, 6/17, 7/29, 9/16, 10/28, 12/16
+
+3. **한국은행 금통위**: 연 8회 고정 일정입니다. 해당 월에 금통위가 없으면 포함하지 마세요.
+   - 2026년 금통위 예상 일정: 1/15, 2/27, 4/9, 5/28, 7/9, 8/27, 10/15, 11/26
+
+4. **미국 대선**: 4년 주기입니다. 2024년에 실시, 다음은 2028년. 2026년은 중간선거입니다.
+
+5. **실적 발표**: 동일 기업의 같은 분기 실적을 중복 등록하지 마세요.
+   - 삼성전자 잠정실적(4월 초)과 확정실적(4월 말)은 별개 이벤트로 가능하지만, 같은 것을 2번 넣지 마세요.
+
+6. **컨퍼런스**: 실제 개최 시기를 확인하세요.
+   - CES: 1월, MWC: 2-3월, Google I/O: 5월, WWDC: 6월, GTC: 3월
+
+7. **구체성**: "주요 기업 IPO", "글로벌 경제 포럼" 같은 모호한 이벤트는 포함하지 마세요.
+   기업명, 행사명 등 구체적인 이름이 있는 이벤트만 포함하세요.
+
+## 카테고리
+- policy: 정책/규제 (금리 결정, 정부 정책 등)
+- earnings: 실적 발표 (주요 기업 분기 실적)
+- product: 제품/서비스 출시
+- conference: 컨퍼런스/행사
+- ipo: IPO/상장 (실제 예정된 것만)
+- dividend: 배당/주주환원
+- global: 글로벌 이벤트 (정상회의, 경제지표 등)
+
+## 수혜종목
+각 이벤트에 대해 수혜종목 1~3개를 포함해주세요.
+한국 종목은 6자리 숫자 종목코드, 미국 종목은 알파벳 티커를 사용하세요.
+
+## 응답 형식 (JSON만)
+{{
+  "events": [
+    {{
+      "title": "구체적인 이벤트 제목",
+      "description": "이벤트 설명 (1~2문장)",
+      "event_date": "YYYY-MM-DD",
+      "category": "policy|earnings|product|conference|ipo|dividend|global",
+      "impact_level": "high|medium|low",
+      "stocks": [
+        {{
+          "ticker": "종목코드",
+          "name": "종목명",
+          "market": "KR|US",
+          "expected_impact": "positive|negative|neutral",
+          "relation_type": "direct|indirect|sector",
+          "reasoning": "수혜 사유 (1문장)"
+        }}
+      ]
+    }}
+  ]
+}}
+
+실제로 확인 가능한 이벤트를 기반으로, 8~12개의 이벤트를 생성하세요.
+날짜는 {body.year}년 {body.month}월 내 날짜여야 합니다.
+확실하지 않은 이벤트는 포함하지 마세요."""
+
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.openai_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": settings.llm_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "response_format": {"type": "json_object"},
+                    "temperature": 0.7,
+                },
+            )
+            resp.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        logger.error("OpenAI API error: %s", e.response.text)
+        raise HTTPException(status_code=502, detail=f"OpenAI API 오류: {e.response.status_code}")
+    except httpx.RequestError as e:
+        logger.error("OpenAI request failed: %s", e)
+        raise HTTPException(status_code=502, detail="OpenAI API 연결 실패")
+
+    try:
+        data = resp.json()
+        content = data["choices"][0]["message"]["content"]
+        parsed = json.loads(content)
+        events_data = parsed.get("events", [])
+    except (KeyError, json.JSONDecodeError) as e:
+        logger.error("Failed to parse OpenAI response: %s", e)
+        raise HTTPException(status_code=502, detail="OpenAI 응답 파싱 실패")
+
+    # 같은 월 내 기존 이벤트 title 조회 (중복 방지)
+    existing_result = await session.execute(
+        select(MarketEventModel.title).where(
+            and_(
+                extract("year", MarketEventModel.event_date) == body.year,
+                extract("month", MarketEventModel.event_date) == body.month,
+            )
+        )
+    )
+    existing_titles = {row[0] for row in existing_result.all()}
+
+    valid_categories = {"policy", "earnings", "product", "conference", "ipo", "dividend", "global"}
+    valid_impacts = {"high", "medium", "low"}
+    valid_expected = {"positive", "negative", "neutral"}
+    valid_relations = {"direct", "indirect", "sector"}
+
+    created_events = []
+    for ev in events_data:
+        title = ev.get("title", "").strip()
+        if not title or title in existing_titles:
+            continue
+
+        category = ev.get("category", "global")
+        if category not in valid_categories:
+            category = "global"
+        impact_level = ev.get("impact_level", "medium")
+        if impact_level not in valid_impacts:
+            impact_level = "medium"
+
+        try:
+            event_date = datetime.strptime(ev.get("event_date", ""), "%Y-%m-%d")
+        except (ValueError, TypeError):
+            continue
+
+        event = MarketEventModel(
+            title=title,
+            description=ev.get("description", ""),
+            event_date=event_date,
+            category=category,
+            impact_level=impact_level,
+        )
+        session.add(event)
+        await session.flush()
+
+        for stock in ev.get("stocks", []):
+            ticker = stock.get("ticker", "").strip()
+            name = stock.get("name", "").strip()
+            market = stock.get("market", "KR").upper()
+            if not ticker or not name:
+                continue
+            if market not in ("KR", "US"):
+                market = "KR"
+
+            expected_impact = stock.get("expected_impact", "positive")
+            if expected_impact not in valid_expected:
+                expected_impact = "positive"
+            relation_type = stock.get("relation_type", "direct")
+            if relation_type not in valid_relations:
+                relation_type = "direct"
+
+            es = EventStockModel(
+                event_id=event.id,
+                ticker=ticker,
+                name=name,
+                market=market,
+                expected_impact=expected_impact,
+                relation_type=relation_type,
+                reasoning=stock.get("reasoning", ""),
+            )
+            session.add(es)
+
+        existing_titles.add(title)
+        created_events.append(event)
+
+    await session.commit()
+
+    # Reload with stocks
+    result_events = []
+    for event in created_events:
+        stmt = (
+            select(MarketEventModel)
+            .options(selectinload(MarketEventModel.stocks))
+            .where(MarketEventModel.id == event.id)
+        )
+        result = await session.execute(stmt)
+        ev = result.scalar_one()
+        result_events.append({
+            "id": ev.id,
+            "title": ev.title,
+            "description": ev.description,
+            "event_date": ev.event_date.isoformat() if ev.event_date else None,
+            "category": ev.category,
+            "impact_level": ev.impact_level,
+            "is_active": ev.is_active,
+            "stock_count": len(ev.stocks),
+        })
+
+    return {
+        "success": True,
+        "generated_count": len(result_events),
+        "events": result_events,
+    }
+
+
 @router.patch("/events/{event_id}/toggle-active")
 async def toggle_event_active(
     event_id: int,
@@ -489,3 +718,51 @@ async def toggle_event_active(
     await session.commit()
 
     return {"id": event.id, "is_active": event.is_active}
+
+
+# ─── Navigation Order Management ─────────────────────────────
+
+DEFAULT_NAV_ORDER = [
+    "/", "/search", "/my-analyses", "/recommendations",
+    "/events", "/paper-trading", "/news", "/compare", "/admin",
+]
+
+
+class NavOrderBody(BaseModel):
+    order: list[str]
+
+
+@router.get("/navigation")
+async def get_navigation_order(
+    _=Depends(get_admin_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """현재 메뉴 순서 반환 (DB에서 조회, 없으면 기본값)."""
+    result = await session.execute(
+        select(SiteSettingModel).where(SiteSettingModel.key == "nav_order")
+    )
+    setting = result.scalar_one_or_none()
+    if setting:
+        order = json.loads(setting.value)
+    else:
+        order = DEFAULT_NAV_ORDER
+    return {"order": order}
+
+
+@router.put("/navigation")
+async def update_navigation_order(
+    body: NavOrderBody,
+    _=Depends(get_admin_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """메뉴 순서 저장."""
+    result = await session.execute(
+        select(SiteSettingModel).where(SiteSettingModel.key == "nav_order")
+    )
+    setting = result.scalar_one_or_none()
+    if setting:
+        setting.value = json.dumps(body.order)
+    else:
+        session.add(SiteSettingModel(key="nav_order", value=json.dumps(body.order)))
+    await session.commit()
+    return {"ok": True, "order": body.order}

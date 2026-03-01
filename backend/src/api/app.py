@@ -11,7 +11,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from src.config.settings import settings
 from src.db.database import init_db, close_db
-from src.api.routes import recommendations, analysis, news, pipeline, websocket, n8n, auth, watchlist, saved_analysis, prices, paper_trading, fundamental, events, admin
+from src.api.routes import recommendations, analysis, news, pipeline, websocket, n8n, auth, watchlist, saved_analysis, prices, paper_trading, fundamental, events, admin, notifications
 
 logger = logging.getLogger(__name__)
 
@@ -71,8 +71,34 @@ app.include_router(paper_trading.router, prefix="/api/paper", tags=["paper-tradi
 app.include_router(fundamental.router, prefix="/api/fundamental", tags=["fundamental"])
 app.include_router(events.router, prefix="/api/events", tags=["events"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
+app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])
 
 
 @app.get("/api/health")
 async def health_check():
     return {"status": "healthy", "service": "TradeRadar API"}
+
+
+@app.get("/api/navigation")
+async def get_public_navigation():
+    """공개 메뉴 순서 API (사이드바 렌더링용)."""
+    import json
+    from src.db.database import get_async_session
+    from src.models.db_models import SiteSettingModel
+    from sqlalchemy import select
+
+    default_order = [
+        "/", "/search", "/my-analyses", "/recommendations",
+        "/events", "/paper-trading", "/news", "/compare", "/admin",
+    ]
+    try:
+        async for session in get_async_session():
+            result = await session.execute(
+                select(SiteSettingModel).where(SiteSettingModel.key == "nav_order")
+            )
+            setting = result.scalar_one_or_none()
+            if setting:
+                return {"order": json.loads(setting.value)}
+    except Exception:
+        pass
+    return {"order": default_order}

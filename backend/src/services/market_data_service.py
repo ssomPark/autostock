@@ -50,7 +50,14 @@ class MarketDataService:
 
         try:
             data = json.loads(result) if isinstance(result, str) else result
+            # KIS 에러 응답이면 yfinance fallback
+            if isinstance(data, dict) and data.get("error"):
+                return self._yfinance_ohlcv_fallback(ticker, market)
+            if isinstance(data, list) and len(data) == 0:
+                return self._yfinance_ohlcv_fallback(ticker, market)
             df = pd.DataFrame(data)
+            if df.empty:
+                return self._yfinance_ohlcv_fallback(ticker, market)
             if "date" in df.columns:
                 df["date"] = pd.to_datetime(df["date"])
                 df.set_index("date", inplace=True)
@@ -58,7 +65,7 @@ class MarketDataService:
             return df
         except Exception as e:
             logger.error(f"Failed to get OHLCV for {ticker}: {e}")
-            return pd.DataFrame()
+            return self._yfinance_ohlcv_fallback(ticker, market)
 
     def get_current_price(self, ticker: str, market: str = "KOSPI") -> dict:
         """Get current price info. Falls back to yfinance if KIS API fails."""
@@ -78,6 +85,24 @@ class MarketDataService:
             data = self._yfinance_price_fallback(ticker, market, data)
 
         return data
+
+    def _yfinance_ohlcv_fallback(self, ticker: str, market: str) -> pd.DataFrame:
+        """yfinance로 OHLCV 데이터 조회 fallback."""
+        try:
+            yf_ticker = ticker
+            if ticker.isdigit():
+                suffix = ".KQ" if market.upper() == "KOSDAQ" else ".KS"
+                yf_ticker = f"{ticker}{suffix}"
+            df = yf.Ticker(yf_ticker).history(period="3mo")
+            if not df.empty:
+                df.columns = [c.lower() for c in df.columns]
+                df.drop(columns=["stock splits", "dividends"], errors="ignore", inplace=True)
+                df.index = pd.to_datetime(df.index).tz_localize(None)
+                logger.info(f"yfinance OHLCV fallback success for {ticker}: {len(df)} rows")
+                return df
+        except Exception as e:
+            logger.warning(f"yfinance OHLCV fallback failed for {ticker}: {e}")
+        return pd.DataFrame()
 
     def _yfinance_price_fallback(
         self, ticker: str, market: str, original: dict

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import Link from "next/link";
@@ -24,6 +24,7 @@ import {
 import type { LeaderboardEntry, LeaderboardResponse, StockSearchResult } from "@/lib/api";
 import { useQuery } from "@tanstack/react-query";
 import { OrderModal } from "@/components/paper-trading/order-modal";
+import { DonutChart, AssetTrendChart, PnlBarChart, MarketPieChart } from "@/components/paper-trading/portfolio-charts";
 
 interface Account {
   id: number;
@@ -173,16 +174,16 @@ function SellModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="absolute inset-0 bg-[var(--overlay)]" onClick={onClose} />
       <div className="relative bg-[var(--card)] border border-[var(--card-border)] rounded-xl p-6 w-full max-w-md mx-4 shadow-2xl">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-bold">모의 매도</h3>
-          <button onClick={onClose} className="p-1 rounded hover:bg-white/10 transition-colors">
+          <button onClick={onClose} className="p-1 rounded hover:bg-[var(--surface-active)] transition-colors">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
           </button>
         </div>
         <div className="space-y-4">
-          <div className="bg-white/5 rounded-lg p-3">
+          <div className="bg-[var(--surface-hover)] rounded-lg p-3">
             <div className="flex items-center justify-between">
               <div>
                 <span className="font-medium">{position.name}</span>
@@ -202,7 +203,7 @@ function SellModal({
           <div>
             <label className="block text-sm text-[var(--muted)] mb-1">매도 수량</label>
             <div className="flex items-center gap-2">
-              <button onClick={() => setQuantity(Math.max(1, quantity - 1))} className="w-10 h-10 rounded-lg bg-white/5 hover:bg-white/10 transition-colors flex items-center justify-center text-lg">-</button>
+              <button onClick={() => setQuantity(Math.max(1, quantity - 1))} className="w-10 h-10 rounded-lg bg-[var(--surface-hover)] hover:bg-[var(--surface-active)] transition-colors flex items-center justify-center text-lg">-</button>
               <input
                 type="number"
                 min={1}
@@ -215,9 +216,9 @@ function SellModal({
                 }}
                 onFocus={(e) => e.target.select()}
                 onBlur={() => { if (quantity < 1) setQuantity(1); }}
-                className="flex-1 h-10 rounded-lg bg-white/5 border border-[var(--card-border)] px-3 text-center text-lg font-medium focus:outline-none focus:border-blue-500"
+                className="flex-1 h-10 rounded-lg bg-[var(--surface-hover)] border border-[var(--card-border)] px-3 text-center text-lg font-medium focus:outline-none focus:border-blue-500"
               />
-              <button onClick={() => setQuantity(Math.min(position.quantity, quantity + 1))} className="w-10 h-10 rounded-lg bg-white/5 hover:bg-white/10 transition-colors flex items-center justify-center text-lg">+</button>
+              <button onClick={() => setQuantity(Math.min(position.quantity, quantity + 1))} className="w-10 h-10 rounded-lg bg-[var(--surface-hover)] hover:bg-[var(--surface-active)] transition-colors flex items-center justify-center text-lg">+</button>
             </div>
             <div className="flex gap-2 mt-2">
               {[
@@ -229,14 +230,14 @@ function SellModal({
                 <button
                   key={label}
                   onClick={() => setQuantity(q)}
-                  className={`flex-1 py-1 rounded text-xs transition-colors ${quantity === q ? "bg-red-600 text-white" : "bg-white/5 text-[var(--muted)] hover:bg-white/10"}`}
+                  className={`flex-1 py-1 rounded text-xs transition-colors ${quantity === q ? "bg-red-600 text-white" : "bg-[var(--surface-hover)] text-[var(--muted)] hover:bg-[var(--surface-active)]"}`}
                 >
                   {label}
                 </button>
               ))}
             </div>
           </div>
-          <div className="bg-white/5 rounded-lg p-3 space-y-1">
+          <div className="bg-[var(--surface-hover)] rounded-lg p-3 space-y-1">
             <div className="flex justify-between text-sm">
               <span className="text-[var(--muted)]">매도 금액</span>
               <span className="font-medium">{formatKRW(totalRevenueKRW)}원</span>
@@ -337,7 +338,7 @@ function LeaderboardView() {
                   {entry.user_avatar ? (
                     <img src={entry.user_avatar} alt="" className="w-8 h-8 rounded-full shrink-0" />
                   ) : (
-                    <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-sm shrink-0">
+                    <div className="w-8 h-8 rounded-full bg-[var(--surface-active)] flex items-center justify-center text-sm shrink-0">
                       {entry.user_name[0]}
                     </div>
                   )}
@@ -392,7 +393,7 @@ function LeaderboardView() {
                 <tr
                   key={`${entry.user_id}-${entry.rank}`}
                   className={`border-b border-[var(--card-border)] text-sm ${
-                    isMe ? "bg-blue-500/10" : "hover:bg-white/5"
+                    isMe ? "bg-blue-500/10" : "hover:bg-[var(--surface-hover)]"
                   }`}
                 >
                   <td className="p-3 text-center text-lg">
@@ -403,7 +404,7 @@ function LeaderboardView() {
                       {entry.user_avatar ? (
                         <img src={entry.user_avatar} alt="" className="w-7 h-7 rounded-full" />
                       ) : (
-                        <div className="w-7 h-7 rounded-full bg-white/10 flex items-center justify-center text-xs">
+                        <div className="w-7 h-7 rounded-full bg-[var(--surface-active)] flex items-center justify-center text-xs">
                           {entry.user_name[0]}
                         </div>
                       )}
@@ -579,7 +580,7 @@ function ManualBuyForm({ accountId, onSuccess }: { accountId: number; onSuccess:
             onChange={(e) => handleInputChange(e.target.value)}
             onKeyDown={handleKeyDown}
             onFocus={() => suggestions.length > 0 && setShowDropdown(true)}
-            className={`w-full h-10 rounded-lg bg-white/5 border px-3 text-sm focus:outline-none focus:border-blue-500 ${
+            className={`w-full h-10 rounded-lg bg-[var(--surface-hover)] border px-3 text-sm focus:outline-none focus:border-blue-500 ${
               isSelected ? "border-green-500/50" : "border-[var(--card-border)]"
             }`}
           />
@@ -629,7 +630,7 @@ function ManualBuyForm({ accountId, onSuccess }: { accountId: number; onSuccess:
             }}
             onFocus={(e) => e.target.select()}
             onBlur={() => { if (quantity < 1) setQuantity(1); }}
-            className="w-20 h-10 rounded-lg bg-white/5 border border-[var(--card-border)] px-3 text-sm text-center focus:outline-none focus:border-blue-500"
+            className="w-20 h-10 rounded-lg bg-[var(--surface-hover)] border border-[var(--card-border)] px-3 text-sm text-center focus:outline-none focus:border-blue-500"
           />
           <span className="text-sm text-[var(--muted)]">주</span>
         </div>
@@ -709,7 +710,7 @@ function RecommendedBuyList({
           return (
             <div
               key={rec.ticker}
-              className="flex items-center justify-between bg-white/5 rounded-lg p-3"
+              className="flex items-center justify-between bg-[var(--surface-hover)] rounded-lg p-3"
             >
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
@@ -765,7 +766,7 @@ function RecommendedBuyList({
                   ? ((rec.target_price - rec.current_price) / rec.current_price) * 100
                   : null;
               return (
-                <tr key={rec.ticker} className="border-b border-[var(--card-border)] hover:bg-white/5 text-sm">
+                <tr key={rec.ticker} className="border-b border-[var(--card-border)] hover:bg-[var(--surface-hover)] text-sm">
                   <td className="p-2.5">
                     <Link href={`/analysis/${rec.ticker}?market=${rec.market}`} className="hover:underline">
                       <span className="font-medium">{rec.name}</span>
@@ -865,6 +866,14 @@ export default function PaperTradingPage() {
 
   // Tab
   const [activeTab, setActiveTab] = useState<"portfolio" | "ranking">("portfolio");
+
+  // Trade history filters
+  const [tradeSearch, setTradeSearch] = useState("");
+  const [tradeSideFilter, setTradeSideFilter] = useState<"all" | "BUY" | "SELL">("all");
+  const [tradePeriodFilter, setTradePeriodFilter] = useState<"all" | "1w" | "1m" | "3m">("all");
+
+  // Portfolio chart tab
+  const [portfolioTab, setPortfolioTab] = useState<"donut" | "trend" | "pnl" | "market" | "bar">("donut");
 
   // Market status for auto-refresh (direct query, no batch price overhead)
   const { data: marketStatusData } = useQuery({
@@ -1015,6 +1024,72 @@ export default function PaperTradingPage() {
     }
   };
 
+  // --- Portfolio composition data ---
+  const portfolioComposition = useMemo(() => {
+    if (!summary || positions.length === 0) return [];
+    const totalValue = summary.cash_balance + positions.reduce((sum, p) => sum + p.eval_amount, 0);
+    if (totalValue <= 0) return [];
+
+    const sorted = [...positions].sort((a, b) => b.eval_amount - a.eval_amount);
+    const top = sorted.slice(0, 10);
+    const rest = sorted.slice(10);
+    const restSum = rest.reduce((sum, p) => sum + p.eval_amount, 0);
+
+    const items: { label: string; value: number; pct: number }[] = [];
+    for (const p of top) {
+      items.push({ label: p.name, value: p.eval_amount, pct: (p.eval_amount / totalValue) * 100 });
+    }
+    if (restSum > 0) {
+      items.push({ label: `기타 (${rest.length}종목)`, value: restSum, pct: (restSum / totalValue) * 100 });
+    }
+    items.push({ label: "현금", value: summary.cash_balance, pct: (summary.cash_balance / totalValue) * 100 });
+    return items;
+  }, [positions, summary]);
+
+  // --- Filtered trades ---
+  const filteredTrades = useMemo(() => {
+    let filtered = trades;
+    // Side filter
+    if (tradeSideFilter !== "all") {
+      filtered = filtered.filter((t) => t.side === tradeSideFilter);
+    }
+    // Search filter
+    if (tradeSearch.trim()) {
+      const q = tradeSearch.trim().toLowerCase();
+      filtered = filtered.filter(
+        (t) => t.name.toLowerCase().includes(q) || t.ticker.toLowerCase().includes(q)
+      );
+    }
+    // Period filter
+    if (tradePeriodFilter !== "all") {
+      const now = Date.now();
+      const msMap = { "1w": 7 * 86400000, "1m": 30 * 86400000, "3m": 90 * 86400000 };
+      const cutoff = now - msMap[tradePeriodFilter];
+      filtered = filtered.filter((t) => new Date(t.executed_at).getTime() >= cutoff);
+    }
+    return filtered;
+  }, [trades, tradeSideFilter, tradeSearch, tradePeriodFilter]);
+
+  // --- Trade statistics ---
+  const tradeStats = useMemo(() => {
+    const sellTrades = trades.filter((t) => t.side === "SELL" && t.realized_pnl != null);
+    const totalCount = trades.length;
+    const winTrades = sellTrades.filter((t) => (t.realized_pnl ?? 0) > 0);
+    const winRate = sellTrades.length > 0 ? (winTrades.length / sellTrades.length) * 100 : 0;
+    const avgPnlPct = sellTrades.length > 0
+      ? sellTrades.reduce((sum, t) => sum + (t.realized_pnl_pct ?? 0), 0) / sellTrades.length
+      : 0;
+    let bestTrade: Trade | null = null;
+    let bestPnl = -Infinity;
+    for (const t of sellTrades) {
+      if ((t.realized_pnl ?? 0) > bestPnl) {
+        bestPnl = t.realized_pnl ?? 0;
+        bestTrade = t;
+      }
+    }
+    return { totalCount, sellCount: sellTrades.length, winRate, avgPnlPct, bestTrade, bestPnl };
+  }, [trades]);
+
   // Auth check
   if (authLoading || loading) {
     return (
@@ -1090,7 +1165,7 @@ export default function PaperTradingPage() {
                 type="text"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
-                className="w-full h-10 rounded-lg bg-white/5 border border-[var(--card-border)] px-3 text-sm focus:outline-none focus:border-blue-500"
+                className="w-full h-10 rounded-lg bg-[var(--surface-hover)] border border-[var(--card-border)] px-3 text-sm focus:outline-none focus:border-blue-500"
               />
             </div>
             <div>
@@ -1101,7 +1176,7 @@ export default function PaperTradingPage() {
                     key={b}
                     onClick={() => setNewBalance(b)}
                     className={`flex-1 py-1.5 rounded text-xs transition-colors ${
-                      newBalance === b ? "bg-blue-600 text-white" : "bg-white/5 text-[var(--muted)] hover:bg-white/10"
+                      newBalance === b ? "bg-blue-600 text-white" : "bg-[var(--surface-hover)] text-[var(--muted)] hover:bg-[var(--surface-active)]"
                     }`}
                   >
                     {(b / 10000).toLocaleString()}만
@@ -1112,14 +1187,14 @@ export default function PaperTradingPage() {
                 type="number"
                 value={newBalance}
                 onChange={(e) => setNewBalance(Math.max(0, parseInt(e.target.value) || 0))}
-                className="w-full h-10 rounded-lg bg-white/5 border border-[var(--card-border)] px-3 text-sm focus:outline-none focus:border-blue-500"
+                className="w-full h-10 rounded-lg bg-[var(--surface-hover)] border border-[var(--card-border)] px-3 text-sm focus:outline-none focus:border-blue-500"
               />
             </div>
             <div className="flex gap-2">
               {accounts.length > 0 && (
                 <button
                   onClick={() => setShowCreate(false)}
-                  className="flex-1 py-2.5 rounded-lg bg-white/5 hover:bg-white/10 text-sm transition-colors"
+                  className="flex-1 py-2.5 rounded-lg bg-[var(--surface-hover)] hover:bg-[var(--surface-active)] text-sm transition-colors"
                 >
                   취소
                 </button>
@@ -1175,7 +1250,7 @@ export default function PaperTradingPage() {
           )}
           <button
             onClick={handleRefresh}
-            className="relative h-9 w-9 rounded-lg bg-[var(--card)] border border-[var(--card-border)] text-sm hover:bg-white/10 transition-colors flex items-center justify-center"
+            className="relative h-9 w-9 rounded-lg bg-[var(--card)] border border-[var(--card-border)] text-sm hover:bg-[var(--surface-active)] transition-colors flex items-center justify-center"
             title={`새로고침 (${countdown}초 후 자동 갱신)`}
           >
             <svg className="absolute inset-0 w-full h-full -rotate-90" viewBox="0 0 36 36">
@@ -1278,6 +1353,75 @@ export default function PaperTradingPage() {
         <ManualBuyForm accountId={activeAccountId} onSuccess={handleRefresh} />
       )}
 
+      {/* Portfolio Composition — Tabbed Charts */}
+      {portfolioComposition.length > 0 && summary && (
+        <div>
+          <h2 className="text-lg font-bold mb-3">포트폴리오 구성</h2>
+          <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg overflow-hidden">
+            {/* Tabs */}
+            <div className="flex border-b border-[var(--card-border)] overflow-x-auto">
+              {(["donut", "trend", "pnl", "market", "bar"] as const).map((tab) => {
+                const labels = { donut: "도넛", trend: "자산 추이", pnl: "손익", market: "시장", bar: "바" };
+                return (
+                  <button
+                    key={tab}
+                    onClick={() => setPortfolioTab(tab)}
+                    className={`px-4 py-2.5 text-sm font-medium whitespace-nowrap transition-colors ${
+                      portfolioTab === tab
+                        ? "text-[var(--accent)] border-b-2 border-[var(--accent)]"
+                        : "text-[var(--muted)] hover:text-[var(--foreground)]"
+                    }`}
+                  >
+                    {labels[tab]}
+                  </button>
+                );
+              })}
+            </div>
+            {/* Tab Content */}
+            <div className="p-4">
+              {portfolioTab === "donut" && (
+                <DonutChart data={portfolioComposition} totalAssets={summary.total_assets} />
+              )}
+              {portfolioTab === "trend" && (
+                <AssetTrendChart trades={trades} summary={summary} />
+              )}
+              {portfolioTab === "pnl" && (
+                <PnlBarChart positions={positions} />
+              )}
+              {portfolioTab === "market" && (
+                <MarketPieChart positions={positions} summary={summary} />
+              )}
+              {portfolioTab === "bar" && (
+                <div className="space-y-2.5">
+                  {portfolioComposition.map((item, idx) => (
+                    <div key={idx} className="flex items-center gap-3 text-sm">
+                      <div className="w-24 sm:w-32 truncate text-[var(--muted)]" title={item.label}>
+                        {item.label}
+                      </div>
+                      <div className="flex-1 h-5 bg-[var(--surface-hover)] rounded-full overflow-hidden relative">
+                        <div
+                          className={`h-full rounded-full transition-all duration-500 ${
+                            item.label === "현금"
+                              ? "bg-emerald-500/30"
+                              : item.label.startsWith("기타")
+                              ? "bg-gray-500/30"
+                              : "bg-blue-500/30"
+                          }`}
+                          style={{ width: `${Math.max(item.pct, 1)}%` }}
+                        />
+                      </div>
+                      <div className="w-14 text-right font-medium tabular-nums">
+                        {item.pct.toFixed(1)}%
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Positions */}
       <div>
         <h2 className="text-lg font-bold mb-3">보유 포지션</h2>
@@ -1347,7 +1491,7 @@ export default function PaperTradingPage() {
                 </thead>
                 <tbody>
                   {positions.map((pos) => (
-                    <tr key={pos.id} className="border-b border-[var(--card-border)] hover:bg-white/5">
+                    <tr key={pos.id} className="border-b border-[var(--card-border)] hover:bg-[var(--surface-hover)]">
                       <td className="p-3">
                         <span className="font-medium">{pos.name}</span>
                         <span className="text-[var(--muted)] text-sm ml-1">({pos.ticker})</span>
@@ -1416,15 +1560,115 @@ export default function PaperTradingPage() {
         </button>
         {showTrades && (
           <>
+            {/* Trade Statistics */}
+            {trades.length > 0 && (
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+                <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-3">
+                  <div className="text-xs text-[var(--muted)] mb-1">총 거래 수</div>
+                  <div className="text-lg font-bold">{tradeStats.totalCount}건</div>
+                  <div className="text-xs text-[var(--muted)] mt-0.5">
+                    매수 {trades.filter((t) => t.side === "BUY").length} / 매도 {tradeStats.sellCount}
+                  </div>
+                </div>
+                <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-3">
+                  <div className="text-xs text-[var(--muted)] mb-1">승률</div>
+                  <div className="text-lg font-bold" style={{ color: tradeStats.winRate >= 50 ? "#4ade80" : tradeStats.sellCount > 0 ? "#f87171" : "inherit" }}>
+                    {tradeStats.sellCount > 0 ? `${tradeStats.winRate.toFixed(1)}%` : "-"}
+                  </div>
+                  <div className="text-xs text-[var(--muted)] mt-0.5">
+                    {tradeStats.sellCount > 0 ? `${tradeStats.sellCount}건 중 ${Math.round(tradeStats.winRate * tradeStats.sellCount / 100)}건 수익` : "매도 이력 없음"}
+                  </div>
+                </div>
+                <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-3">
+                  <div className="text-xs text-[var(--muted)] mb-1">평균 수익률</div>
+                  <div className="text-lg font-bold">
+                    {tradeStats.sellCount > 0 ? (
+                      <span style={{ color: tradeStats.avgPnlPct >= 0 ? "#4ade80" : "#f87171" }}>
+                        {tradeStats.avgPnlPct >= 0 ? "+" : ""}{tradeStats.avgPnlPct.toFixed(2)}%
+                      </span>
+                    ) : "-"}
+                  </div>
+                  <div className="text-xs text-[var(--muted)] mt-0.5">매도 기준</div>
+                </div>
+                <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-3">
+                  <div className="text-xs text-[var(--muted)] mb-1">최대 수익 거래</div>
+                  {tradeStats.bestTrade ? (
+                    <>
+                      <div className="text-lg font-bold" style={{ color: tradeStats.bestPnl >= 0 ? "#4ade80" : "#f87171" }}>
+                        {tradeStats.bestPnl >= 0 ? "+" : ""}{formatKRW(tradeStats.bestPnl)}원
+                      </div>
+                      <div className="text-xs text-[var(--muted)] mt-0.5 truncate" title={tradeStats.bestTrade.name}>
+                        {tradeStats.bestTrade.name} ({tradeStats.bestTrade.ticker})
+                      </div>
+                    </>
+                  ) : (
+                    <div className="text-lg font-bold">-</div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Trade Filters */}
+            {trades.length > 0 && (
+              <div className="flex flex-col sm:flex-row gap-2 mb-3">
+                <input
+                  type="text"
+                  placeholder="종목명/코드 검색"
+                  value={tradeSearch}
+                  onChange={(e) => setTradeSearch(e.target.value)}
+                  className="h-9 rounded-lg bg-[var(--surface-hover)] border border-[var(--card-border)] px-3 text-sm focus:outline-none focus:border-blue-500 sm:w-48"
+                />
+                <div className="flex gap-1">
+                  {(["all", "BUY", "SELL"] as const).map((v) => (
+                    <button
+                      key={v}
+                      onClick={() => setTradeSideFilter(v)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                        tradeSideFilter === v
+                          ? "bg-blue-600 text-white"
+                          : "bg-[var(--surface-hover)] text-[var(--muted)] hover:bg-[var(--surface-active)]"
+                      }`}
+                    >
+                      {v === "all" ? "전체" : v === "BUY" ? "매수" : "매도"}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex gap-1">
+                  {(["all", "1w", "1m", "3m"] as const).map((v) => (
+                    <button
+                      key={v}
+                      onClick={() => setTradePeriodFilter(v)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                        tradePeriodFilter === v
+                          ? "bg-blue-600 text-white"
+                          : "bg-[var(--surface-hover)] text-[var(--muted)] hover:bg-[var(--surface-active)]"
+                      }`}
+                    >
+                      {v === "all" ? "전체기간" : v === "1w" ? "1주" : v === "1m" ? "1개월" : "3개월"}
+                    </button>
+                  ))}
+                </div>
+                {(tradeSearch || tradeSideFilter !== "all" || tradePeriodFilter !== "all") && (
+                  <span className="text-xs text-[var(--muted)] self-center">
+                    {filteredTrades.length}건
+                  </span>
+                )}
+              </div>
+            )}
+
             {trades.length === 0 ? (
               <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-6 text-center text-[var(--muted)]">
                 거래 이력이 없습니다.
+              </div>
+            ) : filteredTrades.length === 0 ? (
+              <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-6 text-center text-[var(--muted)]">
+                검색 조건에 맞는 거래가 없습니다.
               </div>
             ) : (
               <>
                 {/* Mobile */}
                 <div className="md:hidden space-y-2">
-                  {trades.map((t) => (
+                  {filteredTrades.map((t) => (
                     <div key={t.id} className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-3">
                       <div className="flex items-center justify-between mb-1">
                         <div className="flex items-center gap-2">
@@ -1465,8 +1709,8 @@ export default function PaperTradingPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {trades.map((t) => (
-                        <tr key={t.id} className="border-b border-[var(--card-border)] hover:bg-white/5 text-sm">
+                      {filteredTrades.map((t) => (
+                        <tr key={t.id} className="border-b border-[var(--card-border)] hover:bg-[var(--surface-hover)] text-sm">
                           <td className="p-3">
                             <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${t.side === "BUY" ? "bg-green-600/20 text-green-400" : "bg-red-600/20 text-red-400"}`}>
                               {t.side === "BUY" ? "매수" : "매도"}
@@ -1553,7 +1797,7 @@ export default function PaperTradingPage() {
       {/* Deposit Modal */}
       {showDeposit && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/60" onClick={() => setShowDeposit(false)} />
+          <div className="absolute inset-0 bg-[var(--overlay)]" onClick={() => setShowDeposit(false)} />
           <div className="relative bg-[var(--card)] border border-[var(--card-border)] rounded-xl p-6 w-full max-w-sm mx-4 shadow-2xl">
             <h3 className="text-lg font-bold mb-4">추가 입금</h3>
             <div className="flex flex-wrap gap-2 mb-3">
@@ -1562,7 +1806,7 @@ export default function PaperTradingPage() {
                   key={v}
                   onClick={() => setDepositAmount(v)}
                   className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-                    depositAmount === v ? "bg-blue-600 text-white" : "bg-white/10 text-[var(--muted)] hover:bg-white/20"
+                    depositAmount === v ? "bg-blue-600 text-white" : "bg-[var(--surface-active)] text-[var(--muted)] hover:bg-white/20"
                   }`}
                 >
                   {formatKRW(v)}원
@@ -1575,7 +1819,7 @@ export default function PaperTradingPage() {
                 type="number"
                 value={depositAmount}
                 onChange={(e) => setDepositAmount(Math.max(0, Number(e.target.value)))}
-                className="w-full h-10 rounded-lg bg-white/5 border border-[var(--card-border)] px-3 text-sm focus:outline-none focus:border-blue-500"
+                className="w-full h-10 rounded-lg bg-[var(--surface-hover)] border border-[var(--card-border)] px-3 text-sm focus:outline-none focus:border-blue-500"
                 min={0}
                 step={1_000_000}
               />
@@ -1583,7 +1827,7 @@ export default function PaperTradingPage() {
             <div className="flex gap-2 mt-4">
               <button
                 onClick={() => setShowDeposit(false)}
-                className="flex-1 py-2.5 rounded-lg bg-white/10 hover:bg-white/20 text-sm transition-colors"
+                className="flex-1 py-2.5 rounded-lg bg-[var(--surface-active)] hover:bg-white/20 text-sm transition-colors"
               >
                 취소
               </button>

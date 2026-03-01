@@ -33,7 +33,7 @@ export default function LoginPage() {
         <div className="space-y-3">
           <button
             onClick={() => login("google")}
-            className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-lg border border-[var(--card-border)] hover:bg-white/5 transition-colors"
+            className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-lg border border-[var(--card-border)] hover:bg-[var(--surface-hover)] transition-colors"
           >
             <svg width="18" height="18" viewBox="0 0 48 48">
               <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>

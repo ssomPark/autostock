@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     # LLM
     openai_api_key: str = ""
     anthropic_api_key: str = ""
-    llm_model: str = "gpt-4o"
+    llm_model: str = "gpt-4o-mini"
 
     # Database
     database_url: str = "postgresql+asyncpg://traderadar:traderadar@localhost:5432/traderadar"

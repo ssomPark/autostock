@@ -166,7 +166,15 @@ async def get_dashboard_summary(
         .where(RecommendationModel.pipeline_run_id.in_(pipeline_ids))
         .order_by(desc(RecommendationModel.confidence))
     )
-    recommendations = recs_result.scalars().all()
+    all_recs = recs_result.scalars().all()
+
+    # 여러 파이프라인 합산 시 동일 ticker 중복 제거
+    seen: dict[str, RecommendationModel] = {}
+    for r in all_recs:
+        if r.ticker not in seen or (r.confidence or 0) > (seen[r.ticker].confidence or 0):
+            seen[r.ticker] = r
+    recommendations = list(seen.values())
+    recommendations.sort(key=lambda r: r.confidence or 0, reverse=True)
 
     buy_count = sum(1 for r in recommendations if r.action == "BUY")
     sell_count = sum(1 for r in recommendations if r.action == "SELL")
@@ -235,9 +243,17 @@ async def get_recommendations(
     result = await session.execute(query)
     recs = result.scalars().all()
 
+    # 여러 파이프라인 합산 시 동일 ticker 중복 제거 (confidence 높은 것 유지)
+    seen: dict[str, RecommendationModel] = {}
+    for r in recs:
+        if r.ticker not in seen or (r.confidence or 0) > (seen[r.ticker].confidence or 0):
+            seen[r.ticker] = r
+    unique_recs = list(seen.values())
+    unique_recs.sort(key=lambda r: r.confidence or 0, reverse=True)
+
     return {
         "success": True,
-        "data": [_rec_to_dict(r) for r in recs],
+        "data": [_rec_to_dict(r) for r in unique_recs[:limit]],
         "filters": {"market": market, "action": action, "limit": limit},
     }
 

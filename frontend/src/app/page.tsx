@@ -52,6 +52,12 @@ const features = [
     free: false,
   },
   {
+    icon: "⚖️",
+    title: "종목 비교",
+    desc: "여러 종목의 기술적 분석 결과를 나란히 비교하세요.",
+    free: false,
+  },
+  {
     icon: "⚡",
     title: "무제한 분석",
     desc: "비로그인 시 하루 5회 → 로그인 시 무제한 분석이 가능합니다.",
@@ -66,6 +72,7 @@ const comparisonRows = [
   { feature: "이벤트 캘린더", guest: "✗", member: "✓" },
   { feature: "모의 투자", guest: "✗", member: "✓" },
   { feature: "분석 저장", guest: "✗", member: "✓" },
+  { feature: "종목 비교", guest: "✗", member: "✓" },
   { feature: "워치리스트", guest: "로컬 저장", member: "클라우드 동기화" },
 ];
 

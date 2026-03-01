@@ -12,6 +12,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    func,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, relationship
@@ -177,6 +178,7 @@ class UserModel(Base):
     watchlist_items = relationship("WatchlistItemModel", back_populates="user", cascade="all, delete-orphan")
     saved_analyses = relationship("SavedAnalysisModel", back_populates="user", cascade="all, delete-orphan")
     paper_accounts = relationship("PaperAccountModel", back_populates="user", cascade="all, delete-orphan")
+    notifications = relationship("NotificationModel", back_populates="user", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("ix_users_provider_provider_id", "provider", "provider_id", unique=True),
@@ -382,6 +384,37 @@ class AdRewardLogModel(Base):
         Index("ix_ad_reward_logs_account_id", "account_id"),
         Index("ix_ad_reward_logs_token", "reward_token"),
     )
+
+
+class NotificationModel(Base):
+    """사용자 알림."""
+    __tablename__ = "notifications"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    type = Column(String(30), nullable=False)  # recommendation / system / price_alert
+    title = Column(String(300), nullable=False)
+    message = Column(Text, default="")
+    link = Column(String(500), nullable=True)  # 클릭 시 이동할 경로
+    is_read = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.now)
+
+    user = relationship("UserModel", back_populates="notifications")
+
+    __table_args__ = (
+        Index("ix_notifications_user_id", "user_id"),
+        Index("ix_notifications_user_read", "user_id", "is_read"),
+        Index("ix_notifications_created_at", "created_at"),
+    )
+
+
+class SiteSettingModel(Base):
+    """범용 사이트 설정 (key-value)."""
+    __tablename__ = "site_settings"
+
+    key = Column(String(100), primary_key=True)
+    value = Column(Text, nullable=False)  # JSON string
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
 
 class OHLCVCacheModel(Base):

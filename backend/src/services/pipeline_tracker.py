@@ -113,6 +113,20 @@ class PipelineTracker:
 
     async def step_start(self, step_id: str) -> None:
         async with self._lock:
+            # 이전 running step이 있으면 자동 완료 처리
+            for s in self._state["steps"]:
+                if s["id"] != step_id and s["status"] == "running":
+                    start_time = s.pop("_start_time", time.time())
+                    s["status"] = "completed"
+                    s["duration"] = round(time.time() - start_time, 1)
+                    if not s.get("summary"):
+                        s["summary"] = "자동 완료"
+                    self._state["logs"].append(
+                        self._log_entry(
+                            f"✅ {s['name']} 완료 ({s['duration']}s) - {s['summary']}"
+                        )
+                    )
+
             step = self._find_step(step_id)
             if step:
                 step["status"] = "running"
@@ -157,6 +171,20 @@ class PipelineTracker:
 
     async def complete(self, summary: str = "") -> None:
         async with self._lock:
+            # 아직 running 상태인 step이 있으면 자동 완료 처리
+            for s in self._state["steps"]:
+                if s["status"] == "running":
+                    start_time = s.pop("_start_time", time.time())
+                    s["status"] = "completed"
+                    s["duration"] = round(time.time() - start_time, 1)
+                    if not s.get("summary"):
+                        s["summary"] = "자동 완료"
+                    self._state["logs"].append(
+                        self._log_entry(
+                            f"✅ {s['name']} 완료 ({s['duration']}s) - {s['summary']}"
+                        )
+                    )
+
             batch = self._state["batch"]
             if batch["enabled"]:
                 # 배치 모드: 현재 마켓 완료만 기록 (최종 완료는 advance_batch에서 처리)
@@ -221,9 +249,24 @@ class PipelineTracker:
                 await self._broadcast()
                 return None
 
+    async def reset(self) -> None:
+        """강제 리셋 — 상태를 idle로 초기화."""
+        async with self._lock:
+            old_status = self._state["status"]
+            self._state = self._idle_state()
+            self._state["logs"] = [
+                self._log_entry(f"파이프라인 수동 리셋 (이전 상태: {old_status})")
+            ]
+            await self._broadcast()
+
     def get_state(self) -> dict[str, Any]:
         state = {**self._state}
         state["elapsed_seconds"] = self._elapsed()
+
+        # 자동 타임아웃: 15분(900초) 초과 시 timeout 처리
+        if state["status"] == "running" and state["elapsed_seconds"] > 900:
+            state["status"] = "timeout"
+
         steps = []
         for s in state["steps"]:
             steps.append({k: v for k, v in s.items() if not k.startswith("_")})

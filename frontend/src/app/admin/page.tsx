@@ -11,13 +11,17 @@ import {
   fetchAdminSavedAnalysesStats,
   fetchAdminEvents,
   toggleAdminEventActive,
+  autoGenerateEvents,
   triggerPipeline,
+  resetPipeline,
   subscribePipelineStream,
   fetchPipelineStatus,
   fetchPipelineHistory,
+  fetchNavOrder,
+  updateAdminNavOrder,
 } from "@/lib/api";
 
-type Tab = "dashboard" | "users" | "analyses" | "paper-trading" | "events" | "pipeline";
+type Tab = "dashboard" | "users" | "analyses" | "paper-trading" | "events" | "pipeline" | "navigation";
 
 function formatNum(n: number) {
   return n.toLocaleString("ko-KR");
@@ -110,7 +114,7 @@ function UsersTab() {
           placeholder="이름 또는 이메일 검색..."
           value={search}
           onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-          className="flex-1 h-10 rounded-lg bg-white/5 border border-[var(--card-border)] px-3 text-sm focus:outline-none focus:border-blue-500"
+          className="flex-1 h-10 rounded-lg bg-[var(--surface-hover)] border border-[var(--card-border)] px-3 text-sm focus:outline-none focus:border-blue-500"
         />
       </div>
 
@@ -130,7 +134,7 @@ function UsersTab() {
               </thead>
               <tbody>
                 {users.map((u) => (
-                  <tr key={u.id} className="border-b border-[var(--card-border)] last:border-0 hover:bg-white/5">
+                  <tr key={u.id} className="border-b border-[var(--card-border)] last:border-0 hover:bg-[var(--surface-hover)]">
                     <td className="px-4 py-3">{u.id}</td>
                     <td className="px-4 py-3 flex items-center gap-2">
                       {u.avatar_url ? (
@@ -167,9 +171,9 @@ function UsersTab() {
           {/* Pagination */}
           {totalPages > 1 && (
             <div className="flex items-center justify-center gap-2">
-              <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1} className="px-3 py-1.5 rounded bg-white/5 text-sm disabled:opacity-30">이전</button>
+              <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1} className="px-3 py-1.5 rounded bg-[var(--surface-hover)] text-sm disabled:opacity-30">이전</button>
               <span className="text-sm text-[var(--muted)]">{page} / {totalPages}</span>
-              <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages} className="px-3 py-1.5 rounded bg-white/5 text-sm disabled:opacity-30">다음</button>
+              <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages} className="px-3 py-1.5 rounded bg-[var(--surface-hover)] text-sm disabled:opacity-30">다음</button>
             </div>
           )}
         </>
@@ -178,7 +182,7 @@ function UsersTab() {
       {/* User Detail Modal */}
       {detail && (
         <div className="fixed inset-0 z-50 flex items-center justify-center">
-          <div className="absolute inset-0 bg-black/60" onClick={() => setDetail(null)} />
+          <div className="absolute inset-0 bg-[var(--overlay)]" onClick={() => setDetail(null)} />
           <div className="relative bg-[var(--card)] border border-[var(--card-border)] rounded-xl p-6 w-full max-w-md mx-4 shadow-2xl max-h-[80vh] overflow-y-auto">
             <div className="flex items-center gap-3 mb-4">
               {detail.avatar_url ? (
@@ -197,11 +201,11 @@ function UsersTab() {
               <p><span className="text-[var(--muted)]">Provider:</span> {detail.provider}</p>
               <p><span className="text-[var(--muted)]">가입일:</span> {detail.created_at?.split("T")[0]}</p>
               <div className="flex gap-4 mt-2">
-                <div className="flex-1 p-2 bg-white/5 rounded text-center">
+                <div className="flex-1 p-2 bg-[var(--surface-hover)] rounded text-center">
                   <p className="text-lg font-bold">{detail.analysis_count ?? 0}</p>
                   <p className="text-xs text-[var(--muted)]">분석 기록</p>
                 </div>
-                <div className="flex-1 p-2 bg-white/5 rounded text-center">
+                <div className="flex-1 p-2 bg-[var(--surface-hover)] rounded text-center">
                   <p className="text-lg font-bold">{detail.watchlist_count ?? 0}</p>
                   <p className="text-xs text-[var(--muted)]">워치리스트</p>
                 </div>
@@ -210,7 +214,7 @@ function UsersTab() {
                 <div>
                   <p className="text-[var(--muted)] mb-1 mt-2">모의 투자 계좌:</p>
                   {detail.accounts.map((a: any) => (
-                    <div key={a.id} className="ml-2 p-2 bg-white/5 rounded mb-1">
+                    <div key={a.id} className="ml-2 p-2 bg-[var(--surface-hover)] rounded mb-1">
                       <p className="font-medium">{a.name}</p>
                       <p className="text-xs text-[var(--muted)]">잔고: {formatNum(a.cash_balance)}원 / 보너스: {formatNum(a.bonus_balance)}원</p>
                     </div>
@@ -218,7 +222,7 @@ function UsersTab() {
                 </div>
               )}
             </div>
-            <button onClick={() => setDetail(null)} className="mt-4 w-full py-2 rounded-lg bg-white/10 hover:bg-white/20 text-sm transition-colors">닫기</button>
+            <button onClick={() => setDetail(null)} className="mt-4 w-full py-2 rounded-lg bg-[var(--surface-active)] hover:bg-white/20 text-sm transition-colors">닫기</button>
           </div>
         </div>
       )}
@@ -283,7 +287,7 @@ function AnalysesTab() {
               return (
                 <div key={signal} className="flex items-center gap-3">
                   <span className={`px-2 py-0.5 rounded text-xs font-medium w-14 text-center ${signalColors[signal] ?? "bg-gray-500/20 text-gray-400"}`}>{signal}</span>
-                  <div className="flex-1 h-2 bg-white/5 rounded-full overflow-hidden">
+                  <div className="flex-1 h-2 bg-[var(--surface-hover)] rounded-full overflow-hidden">
                     <div
                       className={`h-full rounded-full ${signal === "BUY" ? "bg-green-500" : signal === "SELL" ? "bg-red-500" : "bg-yellow-500"}`}
                       style={{ width: `${pct}%` }}
@@ -301,7 +305,7 @@ function AnalysesTab() {
           <h3 className="font-bold text-sm mb-3">등급 분포</h3>
           <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
             {["A+", "A", "B+", "B", "C", "D", "F"].map((g) => (
-              <div key={g} className="bg-white/5 rounded p-2 text-center">
+              <div key={g} className="bg-[var(--surface-hover)] rounded p-2 text-center">
                 <p className={`text-lg font-bold ${gradeColors[g] ?? "text-gray-400"}`}>{g}</p>
                 <p className="text-xs text-[var(--muted)]">{stats.grade_distribution?.[g] ?? 0}건</p>
               </div>
@@ -412,6 +416,13 @@ function EventsTab() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
 
+  // Auto-generate state
+  const now = new Date();
+  const [genMonth, setGenMonth] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
+  const [genMarket, setGenMarket] = useState("ALL");
+  const [generating, setGenerating] = useState(false);
+  const [genResult, setGenResult] = useState<{ type: "success" | "error"; msg: string } | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
@@ -433,6 +444,29 @@ function EventsTab() {
     } catch { /* ignore */ }
   };
 
+  const handleAutoGenerate = async () => {
+    setGenerating(true);
+    setGenResult(null);
+    try {
+      const [yearStr, monthStr] = genMonth.split("-");
+      const res = await autoGenerateEvents({
+        year: parseInt(yearStr),
+        month: parseInt(monthStr),
+        market: genMarket,
+      });
+      setGenResult({ type: "success", msg: `${res.generated_count}개 이벤트가 생성되었습니다.` });
+      load(); // 테이블 새로고침
+    } catch (err: any) {
+      const msg = err?.message?.includes("400")
+        ? "OpenAI API 키가 설정되지 않았습니다."
+        : err?.message?.includes("502")
+        ? "OpenAI API 호출에 실패했습니다."
+        : "이벤트 자동 생성에 실패했습니다.";
+      setGenResult({ type: "error", msg });
+    }
+    setGenerating(false);
+  };
+
   const categoryColors: Record<string, string> = {
     policy: "bg-blue-500/20 text-blue-400",
     earnings: "bg-green-500/20 text-green-400",
@@ -443,8 +477,72 @@ function EventsTab() {
     global: "bg-red-500/20 text-red-400",
   };
 
+  const marketOptions = [
+    { value: "KR", label: "KR" },
+    { value: "US", label: "US" },
+    { value: "ALL", label: "ALL" },
+  ];
+
   return (
     <div className="space-y-4">
+      {/* Auto-generate panel */}
+      <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4">
+        <h3 className="text-sm font-semibold mb-3">이벤트 자동 생성</h3>
+        <div className="flex flex-wrap items-end gap-3">
+          <div>
+            <label className="block text-xs text-[var(--muted)] mb-1">연/월</label>
+            <input
+              type="month"
+              value={genMonth}
+              onChange={(e) => setGenMonth(e.target.value)}
+              className="px-3 py-1.5 rounded bg-[var(--surface-hover)] border border-[var(--card-border)] text-sm"
+              disabled={generating}
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-[var(--muted)] mb-1">시장</label>
+            <div className="flex rounded overflow-hidden border border-[var(--card-border)]">
+              {marketOptions.map((opt) => (
+                <button
+                  key={opt.value}
+                  onClick={() => setGenMarket(opt.value)}
+                  disabled={generating}
+                  className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                    genMarket === opt.value
+                      ? "bg-blue-600 text-white"
+                      : "bg-[var(--surface-hover)] text-[var(--muted)] hover:bg-[var(--surface-active)]"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <button
+            onClick={handleAutoGenerate}
+            disabled={generating}
+            className="px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium disabled:opacity-50 transition-colors flex items-center gap-2"
+          >
+            {generating && (
+              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            )}
+            {generating ? "GPT-4o로 이벤트 검색 중..." : "이벤트 자동 생성"}
+          </button>
+        </div>
+        {genResult && (
+          <div className={`mt-3 text-sm px-3 py-2 rounded ${
+            genResult.type === "success"
+              ? "bg-green-500/10 text-green-400 border border-green-500/20"
+              : "bg-red-500/10 text-red-400 border border-red-500/20"
+          }`}>
+            {genResult.type === "success" ? "\u2713" : "\u2717"} {genResult.msg}
+          </div>
+        )}
+      </div>
+
       {loading ? <LoadingSkeleton /> : (
         <>
           <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg overflow-hidden">
@@ -461,7 +559,7 @@ function EventsTab() {
               </thead>
               <tbody>
                 {events.map((e) => (
-                  <tr key={e.id} className="border-b border-[var(--card-border)] last:border-0 hover:bg-white/5">
+                  <tr key={e.id} className="border-b border-[var(--card-border)] last:border-0 hover:bg-[var(--surface-hover)]">
                     <td className="px-4 py-3">{e.id}</td>
                     <td className="px-4 py-3 max-w-[200px] truncate">{e.title}</td>
                     <td className="px-4 py-3 hidden sm:table-cell">
@@ -492,9 +590,9 @@ function EventsTab() {
 
           {totalPages > 1 && (
             <div className="flex items-center justify-center gap-2">
-              <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1} className="px-3 py-1.5 rounded bg-white/5 text-sm disabled:opacity-30">이전</button>
+              <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1} className="px-3 py-1.5 rounded bg-[var(--surface-hover)] text-sm disabled:opacity-30">이전</button>
               <span className="text-sm text-[var(--muted)]">{page} / {totalPages}</span>
-              <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages} className="px-3 py-1.5 rounded bg-white/5 text-sm disabled:opacity-30">다음</button>
+              <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages} className="px-3 py-1.5 rounded bg-[var(--surface-hover)] text-sm disabled:opacity-30">다음</button>
             </div>
           )}
         </>
@@ -524,7 +622,7 @@ interface PipelineBatchState {
 interface PipelineState {
   pipeline_id: string | null;
   market: string | null;
-  status: "idle" | "running" | "completed" | "failed";
+  status: "idle" | "running" | "completed" | "failed" | "timeout";
   current_step: string | null;
   started_at: number | null;
   elapsed_seconds: number;
@@ -754,6 +852,146 @@ function PipelineHistoryPanel() {
   );
 }
 
+// ─── Navigation Tab ─────────────────────────────────────────
+
+const NAV_ITEM_META: Record<string, { label: string; icon: string }> = {
+  "/": { label: "대시보드", icon: "📊" },
+  "/search": { label: "종목 분석", icon: "🔍" },
+  "/my-analyses": { label: "분석 기록", icon: "📋" },
+  "/recommendations": { label: "투자 추천", icon: "💡" },
+  "/events": { label: "이벤트 캘린더", icon: "📅" },
+  "/paper-trading": { label: "모의 투자", icon: "💰" },
+  "/news": { label: "뉴스", icon: "📰" },
+  "/compare": { label: "종목 비교", icon: "⚖️" },
+  "/admin": { label: "관리자", icon: "🛡️" },
+};
+
+function NavigationTab() {
+  const [order, setOrder] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    fetchNavOrder()
+      .then((res) => setOrder(res.order))
+      .catch(() => setOrder(Object.keys(NAV_ITEM_META)))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const moveUp = (idx: number) => {
+    if (idx <= 0) return;
+    const next = [...order];
+    [next[idx - 1], next[idx]] = [next[idx], next[idx - 1]];
+    setOrder(next);
+    setSaved(false);
+  };
+
+  const moveDown = (idx: number) => {
+    if (idx >= order.length - 1) return;
+    const next = [...order];
+    [next[idx], next[idx + 1]] = [next[idx + 1], next[idx]];
+    setOrder(next);
+    setSaved(false);
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await updateAdminNavOrder(order);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch {
+      alert("저장에 실패했습니다.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return <div className="text-center py-12 text-[var(--muted)]">로딩 중...</div>;
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-semibold">메뉴 순서 관리</h2>
+          <p className="text-sm text-[var(--muted)]">사이드바 메뉴의 표시 순서를 변경합니다.</p>
+        </div>
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+            saved
+              ? "bg-green-600 text-white"
+              : "bg-blue-600 hover:bg-blue-700 text-white"
+          } disabled:opacity-50`}
+        >
+          {saving ? "저장 중..." : saved ? "저장 완료" : "순서 저장"}
+        </button>
+      </div>
+
+      <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg overflow-hidden">
+        <table className="w-full">
+          <thead>
+            <tr className="border-b border-[var(--card-border)] text-xs text-[var(--muted)]">
+              <th className="px-4 py-3 text-left w-12">#</th>
+              <th className="px-4 py-3 text-left">메뉴</th>
+              <th className="px-4 py-3 text-left">경로</th>
+              <th className="px-4 py-3 text-right w-24">순서</th>
+            </tr>
+          </thead>
+          <tbody>
+            {order.map((href, idx) => {
+              const meta = NAV_ITEM_META[href] || { label: href, icon: "❓" };
+              return (
+                <tr
+                  key={href}
+                  className="border-b border-[var(--card-border)] last:border-0 hover:bg-white/[0.02] transition-colors"
+                >
+                  <td className="px-4 py-3 text-sm text-[var(--muted)]">{idx + 1}</td>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">{meta.icon}</span>
+                      <span className="text-sm font-medium">{meta.label}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-sm text-[var(--muted)] font-mono">{href}</td>
+                  <td className="px-4 py-3 text-right">
+                    <div className="flex items-center justify-end gap-1">
+                      <button
+                        onClick={() => moveUp(idx)}
+                        disabled={idx === 0}
+                        className="p-1 rounded hover:bg-[var(--surface-active)] disabled:opacity-20 transition-colors"
+                        title="위로"
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="18 15 12 9 6 15" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={() => moveDown(idx)}
+                        disabled={idx === order.length - 1}
+                        className="p-1 rounded hover:bg-[var(--surface-active)] disabled:opacity-20 transition-colors"
+                        title="아래로"
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ─── Pipeline Tab (Full) ────────────────────────────────────
 function PipelineTab() {
   const { logout } = useAuth();
@@ -761,6 +999,7 @@ function PipelineTab() {
   const [market, setMarket] = useState("KR");
   const [adminError, setAdminError] = useState<string | null>(null);
   const [triggerLoading, setTriggerLoading] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
   const [connected, setConnected] = useState(false);
   const [state, setState] = useState<PipelineState>({
     pipeline_id: null, market: null, status: "idle", current_step: null,
@@ -804,7 +1043,22 @@ function PipelineTab() {
     setTriggerLoading(false);
   };
 
+  const handleReset = async () => {
+    setResetLoading(true);
+    setAdminError(null);
+    try {
+      await resetPipeline();
+      try { const res = await fetchPipelineStatus(); if (res?.data) handleEvent(res.data); } catch { /* ignore */ }
+    } catch (err: any) {
+      setAdminError(`파이프라인 리셋 실패: ${err.message}`);
+    }
+    setResetLoading(false);
+  };
+
   const isRunning = state.status === "running";
+  const isTimeout = state.status === "timeout";
+  const isFailed = state.status === "failed";
+  const showReset = isTimeout || isFailed || (isRunning && state.elapsed_seconds > 300);
   const currentStep = state.steps.find((s) => s.status === "running");
   const completedCount = state.steps.filter((s) => s.status === "completed").length;
   const batch = state.batch;
@@ -839,9 +1093,16 @@ function PipelineTab() {
                   >{m.flag} {m.label}</button>
                 ))}
               </div>
-              <button onClick={handleRun} disabled={isRunning || triggerLoading}
-                className="px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded font-medium text-sm transition-colors w-full sm:w-auto"
-              >{isRunning ? "실행 중..." : triggerLoading ? "시작 중..." : "파이프라인 실행"}</button>
+              <div className="flex gap-2 w-full sm:w-auto">
+                <button onClick={handleRun} disabled={isRunning || isTimeout || triggerLoading}
+                  className="px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded font-medium text-sm transition-colors flex-1 sm:flex-none"
+                >{isRunning ? "실행 중..." : triggerLoading ? "시작 중..." : "파이프라인 실행"}</button>
+                {showReset && (
+                  <button onClick={handleReset} disabled={resetLoading}
+                    className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded font-medium text-sm transition-colors"
+                  >{resetLoading ? "리셋 중..." : "강제 리셋"}</button>
+                )}
+              </div>
             </div>
             {market === "ALL" && !isRunning && (
               <p className="text-xs text-[var(--muted)] mt-2">한국 시장 완료 후 미국 시장을 순차 실행합니다.</p>
@@ -852,15 +1113,36 @@ function PipelineTab() {
           {/* Batch progress */}
           {batch?.enabled && <PipelineBatchProgress batch={batch} currentMarket={state.market} />}
 
+          {/* Timeout / Failed banner */}
+          {isTimeout && (
+            <div className="bg-red-950/30 border border-red-800/50 rounded-lg p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div className="flex items-center gap-3">
+                <span className="text-lg">⏱️</span>
+                <div>
+                  <span className="font-medium text-red-400">파이프라인 타임아웃</span>
+                  <span className="text-[var(--muted)] text-sm ml-2">15분 초과 응답 없음 — 강제 리셋 후 재실행하세요</span>
+                </div>
+              </div>
+              <div className="text-sm text-[var(--muted)] tabular-nums">경과: {Math.floor(elapsed / 60)}분 {Math.floor(elapsed % 60)}초</div>
+            </div>
+          )}
+          {isFailed && (
+            <div className="bg-red-950/30 border border-red-800/50 rounded-lg p-4 flex items-center gap-3">
+              <span className="text-lg">❌</span>
+              <span className="font-medium text-red-400">파이프라인 실패 — 강제 리셋 후 재실행하세요</span>
+            </div>
+          )}
+
           {/* Status bar */}
           {isRunning && (
-            <div className="bg-blue-950/30 border border-blue-800/50 rounded-lg p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div className={`${elapsed > 300 ? "bg-yellow-950/30 border-yellow-800/50" : "bg-blue-950/30 border-blue-800/50"} border rounded-lg p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2`}>
               <div className="flex items-center gap-3">
-                <div className="w-3 h-3 bg-blue-500 rounded-full animate-pulse shrink-0" />
+                <div className={`w-3 h-3 ${elapsed > 300 ? "bg-yellow-500" : "bg-blue-500"} rounded-full animate-pulse shrink-0`} />
                 <div>
                   <span className="font-medium">{currentStep ? `${currentStep.icon} ${currentStep.name}` : "준비 중..."}</span>
                   <span className="text-[var(--muted)] text-sm ml-2">({completedCount}/{state.steps.length} 완료)</span>
                   {batch?.enabled && <span className="text-blue-400 text-sm ml-2">[{state.market}]</span>}
+                  {elapsed > 300 && <span className="text-yellow-400 text-sm ml-2">⚠ 지연됨</span>}
                 </div>
               </div>
               <div className="text-sm text-[var(--muted)] tabular-nums">경과: {elapsed.toFixed(1)}s</div>
@@ -900,7 +1182,7 @@ function LoadingSkeleton() {
   return (
     <div className="space-y-3">
       {[1, 2, 3].map((i) => (
-        <div key={i} className="h-12 bg-white/5 rounded-lg animate-pulse" />
+        <div key={i} className="h-12 bg-[var(--surface-hover)] rounded-lg animate-pulse" />
       ))}
     </div>
   );
@@ -941,6 +1223,7 @@ export default function AdminPage() {
     { key: "paper-trading", label: "모의 투자" },
     { key: "events", label: "이벤트" },
     { key: "pipeline", label: "파이프라인" },
+    { key: "navigation", label: "메뉴 관리" },
   ];
 
   return (
@@ -974,6 +1257,7 @@ export default function AdminPage() {
       {tab === "paper-trading" && <PaperTradingTab />}
       {tab === "events" && <EventsTab />}
       {tab === "pipeline" && <PipelineTab />}
+      {tab === "navigation" && <NavigationTab />}
     </div>
   );
 }

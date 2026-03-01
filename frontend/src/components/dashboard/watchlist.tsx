@@ -6,6 +6,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getWatchlist, getWatchlistSync, removeFromWatchlist, type WatchlistItem } from "@/lib/watchlist";
 import { useAuth } from "@/lib/auth-context";
 import { formatPrice } from "@/lib/format";
+import { useLivePrices } from "@/hooks/use-live-prices";
 
 const gradeColor: Record<string, string> = {
   "A+": "#4ade80",
@@ -16,6 +17,17 @@ const gradeColor: Record<string, string> = {
   D: "#fb923c",
   F: "#f87171",
 };
+
+function formatPct(value: number | null | undefined): React.ReactNode {
+  if (value == null) return "-";
+  const color = value >= 0 ? "#4ade80" : "#f87171";
+  return (
+    <span style={{ color, fontWeight: 500 }}>
+      {value >= 0 ? "+" : ""}
+      {value.toFixed(2)}%
+    </span>
+  );
+}
 
 export function Watchlist() {
   const { isAuthenticated } = useAuth();
@@ -40,6 +52,12 @@ export function Watchlist() {
   }, [isAuthenticated]);
 
   const items = isAuthenticated ? (serverItems ?? []) : localItems;
+
+  // 실시간 가격 조회 (워치리스트에 종목이 있을 때만)
+  const { prices, isLoading: pricesLoading } = useLivePrices({
+    market: "all",
+    enabled: items.length > 0,
+  });
 
   const handleRemove = async (ticker: string) => {
     await removeFromWatchlist(ticker);
@@ -70,6 +88,17 @@ export function Watchlist() {
           const actionLabel =
             item.action === "BUY" ? "매수" : item.action === "SELL" ? "매도" : "관망";
 
+          // 실시간 가격 데이터
+          const lp = prices.get(item.ticker);
+          const livePrice = lp?.live_price ?? null;
+          const dayChangePct = lp?.day_change_pct ?? null;
+
+          // 분석 당시 가격 대비 변동률
+          const changeFromAnalysis =
+            livePrice && item.current_price > 0
+              ? ((livePrice - item.current_price) / item.current_price) * 100
+              : null;
+
           const expectedReturn =
             item.current_price > 0 && item.target_price
               ? ((item.target_price - item.current_price) / item.current_price) * 100
@@ -92,6 +121,21 @@ export function Watchlist() {
                   <span className="text-[var(--muted)] text-xs">{item.ticker}</span>
                 </Link>
                 <div className="flex items-center gap-2">
+                  {/* 일간 등락률 */}
+                  {dayChangePct != null && (
+                    <span
+                      className="text-xs font-medium"
+                      style={{ color: dayChangePct >= 0 ? "#4ade80" : "#f87171" }}
+                    >
+                      {dayChangePct >= 0 ? "+" : ""}{dayChangePct.toFixed(2)}%
+                    </span>
+                  )}
+                  {pricesLoading && dayChangePct == null && (
+                    <svg className="w-3 h-3 animate-spin text-[var(--muted)]" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                  )}
                   {/* Grade badge */}
                   <span
                     className="px-1.5 py-0.5 rounded text-xs font-bold"
@@ -114,10 +158,34 @@ export function Watchlist() {
                   </button>
                 </div>
               </div>
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2 text-xs">
+              <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 text-xs">
                 <div>
                   <span className="text-[var(--muted)]">현재가</span>
-                  <p className="font-medium mt-0.5">{formatPrice(item.current_price, item.market)}</p>
+                  <p className="font-medium mt-0.5">
+                    {livePrice
+                      ? formatPrice(livePrice, item.market)
+                      : formatPrice(item.current_price, item.market)}
+                  </p>
+                  {livePrice && (
+                    <p className="text-[10px] mt-0.5" style={{ color: "var(--muted)" }}>
+                      {dayChangePct != null && (
+                        <span style={{ color: dayChangePct >= 0 ? "#4ade80" : "#f87171" }}>
+                          {dayChangePct >= 0 ? "+" : ""}{dayChangePct.toFixed(2)}%
+                        </span>
+                      )}
+                    </p>
+                  )}
+                </div>
+                <div>
+                  <span className="text-[var(--muted)]">분석대비</span>
+                  <p className="font-medium mt-0.5">
+                    {changeFromAnalysis != null ? formatPct(changeFromAnalysis) : "-"}
+                  </p>
+                  {changeFromAnalysis != null && (
+                    <p className="text-[10px] mt-0.5 text-[var(--muted)]">
+                      ({formatPrice(item.current_price, item.market)})
+                    </p>
+                  )}
                 </div>
                 <div>
                   <span className="text-[var(--muted)]">신뢰도</span>

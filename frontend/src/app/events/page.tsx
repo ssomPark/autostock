@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { useAuth } from "@/lib/auth-context";
 import {
   fetchEvents,
   createEvent,
+  updateEvent,
   deleteEvent,
   addEventStock,
   removeEventStock,
@@ -109,10 +110,11 @@ function DaysBadge({ days }: { days: number | null }) {
 
 // --- Add Event Modal ---
 
-function AddEventModal({ isOpen, onClose, onCreated }: {
+function AddEventModal({ isOpen, onClose, onCreated, editEvent }: {
   isOpen: boolean;
   onClose: () => void;
   onCreated: () => void;
+  editEvent?: MarketEvent;
 }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -122,26 +124,55 @@ function AddEventModal({ isOpen, onClose, onCreated }: {
   const [sourceUrl, setSourceUrl] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
-  const handleSubmit = async () => {
-    if (!title.trim() || !eventDate) return;
-    setSubmitting(true);
-    try {
-      await createEvent({
-        title: title.trim(),
-        description: description.trim(),
-        event_date: new Date(eventDate).toISOString(),
-        category,
-        impact_level: impactLevel,
-        source_url: sourceUrl.trim() || undefined,
-      });
-      onCreated();
-      onClose();
+  const isEditMode = !!editEvent;
+
+  // editEvent 변경 시 폼 프리필
+  useEffect(() => {
+    if (editEvent) {
+      setTitle(editEvent.title);
+      setDescription(editEvent.description || "");
+      setEventDate(new Date(editEvent.event_date).toISOString().split("T")[0]);
+      setCategory(editEvent.category);
+      setImpactLevel(editEvent.impact_level);
+      setSourceUrl(editEvent.source_url || "");
+    } else {
       setTitle("");
       setDescription("");
       setEventDate("");
       setCategory("global");
       setImpactLevel("medium");
       setSourceUrl("");
+    }
+  }, [editEvent]);
+
+  const handleSubmit = async () => {
+    if (!title.trim() || !eventDate) return;
+    setSubmitting(true);
+    try {
+      const payload = {
+        title: title.trim(),
+        description: description.trim(),
+        event_date: new Date(eventDate).toISOString(),
+        category,
+        impact_level: impactLevel,
+        source_url: sourceUrl.trim() || undefined,
+      };
+
+      if (isEditMode) {
+        await updateEvent(editEvent.id, payload);
+      } else {
+        await createEvent(payload);
+      }
+      onCreated();
+      onClose();
+      if (!isEditMode) {
+        setTitle("");
+        setDescription("");
+        setEventDate("");
+        setCategory("global");
+        setImpactLevel("medium");
+        setSourceUrl("");
+      }
     } catch {
       // error
     } finally {
@@ -153,9 +184,9 @@ function AddEventModal({ isOpen, onClose, onCreated }: {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="absolute inset-0 bg-[var(--overlay)]" onClick={onClose} />
       <div className="relative bg-[var(--card)] border border-[var(--card-border)] rounded-xl w-full max-w-lg mx-4 p-6 space-y-4">
-        <h2 className="text-lg font-bold">새 이벤트 등록</h2>
+        <h2 className="text-lg font-bold">{isEditMode ? "이벤트 수정" : "새 이벤트 등록"}</h2>
 
         <div>
           <label className="block text-sm text-[var(--muted)] mb-1">제목 *</label>
@@ -234,7 +265,7 @@ function AddEventModal({ isOpen, onClose, onCreated }: {
         <div className="flex justify-end gap-2 pt-2">
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-lg text-sm text-[var(--muted)] hover:bg-white/5 transition-colors"
+            className="px-4 py-2 rounded-lg text-sm text-[var(--muted)] hover:bg-[var(--surface-hover)] transition-colors"
           >
             취소
           </button>
@@ -243,7 +274,7 @@ function AddEventModal({ isOpen, onClose, onCreated }: {
             disabled={!title.trim() || !eventDate || submitting}
             className="px-4 py-2 rounded-lg text-sm bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50"
           >
-            {submitting ? "등록 중..." : "등록"}
+            {submitting ? (isEditMode ? "수정 중..." : "등록 중...") : (isEditMode ? "수정" : "등록")}
           </button>
         </div>
       </div>
@@ -310,7 +341,7 @@ function AddStockModal({ isOpen, onClose, eventId, onAdded }: {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="absolute inset-0 bg-[var(--overlay)]" onClick={onClose} />
       <div className="relative bg-[var(--card)] border border-[var(--card-border)] rounded-xl w-full max-w-lg mx-4 p-6 space-y-4">
         <h2 className="text-lg font-bold">수혜종목 추가</h2>
 
@@ -342,7 +373,7 @@ function AddStockModal({ isOpen, onClose, eventId, onAdded }: {
               <button
                 key={s.ticker}
                 onClick={() => setSelectedStock(s)}
-                className="w-full px-3 py-2 text-left text-sm hover:bg-white/5 flex items-center justify-between border-b border-[var(--card-border)] last:border-0"
+                className="w-full px-3 py-2 text-left text-sm hover:bg-[var(--surface-hover)] flex items-center justify-between border-b border-[var(--card-border)] last:border-0"
               >
                 <span>
                   {s.name} <span className="text-[var(--muted)]">({s.ticker})</span>
@@ -414,7 +445,7 @@ function AddStockModal({ isOpen, onClose, eventId, onAdded }: {
         <div className="flex justify-end gap-2 pt-2">
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-lg text-sm text-[var(--muted)] hover:bg-white/5 transition-colors"
+            className="px-4 py-2 rounded-lg text-sm text-[var(--muted)] hover:bg-[var(--surface-hover)] transition-colors"
           >
             취소
           </button>
@@ -433,11 +464,12 @@ function AddStockModal({ isOpen, onClose, eventId, onAdded }: {
 
 // --- Event Detail Panel ---
 
-function EventDetailPanel({ event, onClose, onRefresh, isAdmin }: {
+function EventDetailPanel({ event, onClose, onRefresh, isAdmin, onEdit }: {
   event: MarketEvent;
   onClose: () => void;
   onRefresh: () => void;
   isAdmin?: boolean;
+  onEdit?: (event: MarketEvent) => void;
 }) {
   const [showAddStock, setShowAddStock] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -491,21 +523,33 @@ function EventDetailPanel({ event, onClose, onRefresh, isAdmin }: {
           </div>
           <div className="flex items-center gap-1">
             {isAdmin && (
-              <button
-                onClick={handleDeleteEvent}
-                disabled={deleting}
-                className="p-1.5 rounded hover:bg-red-500/20 text-[var(--muted)] hover:text-red-400 transition-colors"
-                title="이벤트 삭제"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="3 6 5 6 21 6" />
-                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                </svg>
-              </button>
+              <>
+                <button
+                  onClick={() => onEdit?.(event)}
+                  className="p-1.5 rounded hover:bg-blue-500/20 text-[var(--muted)] hover:text-blue-400 transition-colors"
+                  title="이벤트 수정"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                  </svg>
+                </button>
+                <button
+                  onClick={handleDeleteEvent}
+                  disabled={deleting}
+                  className="p-1.5 rounded hover:bg-red-500/20 text-[var(--muted)] hover:text-red-400 transition-colors"
+                  title="이벤트 삭제"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                  </svg>
+                </button>
+              </>
             )}
             <button
               onClick={onClose}
-              className="p-1.5 rounded hover:bg-white/10 text-[var(--muted)] transition-colors"
+              className="p-1.5 rounded hover:bg-[var(--surface-active)] text-[var(--muted)] transition-colors"
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="18" y1="6" x2="6" y2="18" />
@@ -810,6 +854,7 @@ export default function EventsPage() {
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [selectedEvent, setSelectedEvent] = useState<MarketEvent | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [editEvent, setEditEvent] = useState<MarketEvent | undefined>(undefined);
   const [viewMode, setViewMode] = useState<"calendar" | "list">("calendar");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
 
@@ -904,7 +949,7 @@ export default function EventsPage() {
               className={`px-3 py-1.5 text-xs ${
                 viewMode === "calendar"
                   ? "bg-blue-600 text-white"
-                  : "text-[var(--muted)] hover:bg-white/5"
+                  : "text-[var(--muted)] hover:bg-[var(--surface-hover)]"
               }`}
             >
               캘린더
@@ -914,7 +959,7 @@ export default function EventsPage() {
               className={`px-3 py-1.5 text-xs ${
                 viewMode === "list"
                   ? "bg-blue-600 text-white"
-                  : "text-[var(--muted)] hover:bg-white/5"
+                  : "text-[var(--muted)] hover:bg-[var(--surface-hover)]"
               }`}
             >
               목록
@@ -922,7 +967,10 @@ export default function EventsPage() {
           </div>
           {isAdmin && (
             <button
-              onClick={() => setShowAddModal(true)}
+              onClick={() => {
+                setEditEvent(undefined);
+                setShowAddModal(true);
+              }}
               className="px-3 py-1.5 rounded-lg text-sm bg-blue-600 text-white hover:bg-blue-700 transition-colors"
             >
               + 이벤트 등록
@@ -936,7 +984,7 @@ export default function EventsPage() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => goMonth(-1)}
-            className="p-1.5 rounded hover:bg-white/10 text-[var(--muted)] transition-colors"
+            className="p-1.5 rounded hover:bg-[var(--surface-active)] text-[var(--muted)] transition-colors"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <polyline points="15 18 9 12 15 6" />
@@ -947,7 +995,7 @@ export default function EventsPage() {
           </span>
           <button
             onClick={() => goMonth(1)}
-            className="p-1.5 rounded hover:bg-white/10 text-[var(--muted)] transition-colors"
+            className="p-1.5 rounded hover:bg-[var(--surface-active)] text-[var(--muted)] transition-colors"
           >
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <polyline points="9 18 15 12 9 6" />
@@ -955,7 +1003,7 @@ export default function EventsPage() {
           </button>
           <button
             onClick={goToday}
-            className="px-2 py-1 rounded text-xs text-[var(--muted)] border border-[var(--card-border)] hover:bg-white/5 ml-1"
+            className="px-2 py-1 rounded text-xs text-[var(--muted)] border border-[var(--card-border)] hover:bg-[var(--surface-hover)] ml-1"
           >
             오늘
           </button>
@@ -970,7 +1018,7 @@ export default function EventsPage() {
             className={`px-2 py-1 rounded text-xs transition-colors ${
               categoryFilter === "all"
                 ? "bg-blue-600 text-white"
-                : "text-[var(--muted)] border border-[var(--card-border)] hover:bg-white/5"
+                : "text-[var(--muted)] border border-[var(--card-border)] hover:bg-[var(--surface-hover)]"
             }`}
           >
             전체
@@ -984,7 +1032,7 @@ export default function EventsPage() {
                 className={`px-2 py-1 rounded text-xs transition-colors ${
                   categoryFilter === key
                     ? "text-white"
-                    : "border border-[var(--card-border)] hover:bg-white/5"
+                    : "border border-[var(--card-border)] hover:bg-[var(--surface-hover)]"
                 }`}
                 style={
                   categoryFilter === key
@@ -1067,6 +1115,10 @@ export default function EventsPage() {
                 onClose={() => setSelectedEvent(null)}
                 onRefresh={refreshEvents}
                 isAdmin={isAdmin}
+                onEdit={(ev) => {
+                  setEditEvent(ev);
+                  setShowAddModal(true);
+                }}
               />
             ) : (
               <UpcomingEventsList
@@ -1082,8 +1134,12 @@ export default function EventsPage() {
       {/* Modals */}
       <AddEventModal
         isOpen={showAddModal}
-        onClose={() => setShowAddModal(false)}
+        onClose={() => {
+          setShowAddModal(false);
+          setEditEvent(undefined);
+        }}
         onCreated={refreshEvents}
+        editEvent={editEvent}
       />
     </div>
   );

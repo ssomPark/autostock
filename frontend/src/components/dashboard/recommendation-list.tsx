@@ -78,7 +78,7 @@ export function RecommendationList() {
             <Link
               key={i}
               href={`/analysis/${rec.ticker}?market=${rec.market}`}
-              className="block py-3 px-3 border-b border-[var(--card-border)] last:border-0 hover:bg-white/5 rounded"
+              className="block py-3 px-3 border-b border-[var(--card-border)] last:border-0 hover:bg-[var(--surface-hover)] rounded"
             >
               <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center gap-2">

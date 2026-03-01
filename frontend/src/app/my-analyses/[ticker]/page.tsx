@@ -35,7 +35,7 @@ function SignalBreakdownBar({ label, contribution, weight }: { label: string; co
   return (
     <div className="flex items-center gap-2 text-xs">
       <span className="w-20 text-[var(--muted)] shrink-0">{labelMap[label] || label}</span>
-      <div className="flex-1 h-2 bg-white/5 rounded-full overflow-hidden">
+      <div className="flex-1 h-2 bg-[var(--surface-hover)] rounded-full overflow-hidden">
         <div className="h-full rounded-full" style={{ width: `${Math.min(pct * 4, 100)}%`, backgroundColor: color }} />
       </div>
       <span className="w-16 text-right font-medium" style={{ color }}>

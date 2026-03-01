@@ -10,6 +10,24 @@
   --sell: #ef4444;
   --hold: #eab308;
   --muted: #737373;
+  --surface-hover: rgba(255, 255, 255, 0.05);
+  --surface-active: rgba(255, 255, 255, 0.1);
+  --overlay: rgba(0, 0, 0, 0.6);
+}
+
+.light {
+  --background: #f8f9fa;
+  --foreground: #1a1a1a;
+  --card: #ffffff;
+  --card-border: #e2e8f0;
+  --accent: #2563eb;
+  --buy: #16a34a;
+  --sell: #dc2626;
+  --hold: #ca8a04;
+  --muted: #6b7280;
+  --surface-hover: rgba(0, 0, 0, 0.04);
+  --surface-active: rgba(0, 0, 0, 0.08);
+  --overlay: rgba(0, 0, 0, 0.3);
 }
 
 body {

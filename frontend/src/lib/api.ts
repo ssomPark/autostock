@@ -271,6 +271,10 @@ export function triggerPipeline(market: string) {
   return fetchWithAuth(`/api/pipeline/run?market=${market}`, { method: "POST" });
 }
 
+export function resetPipeline() {
+  return fetchWithAuth("/api/pipeline/reset", { method: "POST" });
+}
+
 export function fetchOHLCV(ticker: string, market: string) {
   return fetchJSON(`/analysis/${ticker}/ohlcv?market=${market}`);
 }
@@ -607,6 +611,45 @@ export function removeEventStock(eventId: number, stockId: number): Promise<{ su
   return fetchJSON(`/events/${eventId}/stocks/${stockId}`, { method: "DELETE" });
 }
 
+// --- Notifications API (authenticated, direct to backend) ---
+
+export interface Notification {
+  id: number;
+  type: string;
+  title: string;
+  message: string;
+  link: string | null;
+  is_read: boolean;
+  created_at: string | null;
+}
+
+export async function fetchNotifications(params?: { unread_only?: boolean; limit?: number }): Promise<{
+  notifications: Notification[];
+  unread_count: number;
+}> {
+  const qs = new URLSearchParams();
+  if (params?.unread_only) qs.set("unread_only", "true");
+  if (params?.limit) qs.set("limit", String(params.limit));
+  const q = qs.toString();
+  return fetchWithAuth(`/api/notifications${q ? `?${q}` : ""}`);
+}
+
+export async function fetchUnreadCount(): Promise<{ unread_count: number }> {
+  return fetchWithAuth("/api/notifications/unread-count");
+}
+
+export async function markNotificationRead(id: number): Promise<{ ok: boolean }> {
+  return fetchWithAuth(`/api/notifications/${id}/read`, { method: "POST" });
+}
+
+export async function markAllNotificationsRead(): Promise<{ ok: boolean }> {
+  return fetchWithAuth("/api/notifications/read-all", { method: "POST" });
+}
+
+export async function deleteNotification(id: number): Promise<{ ok: boolean }> {
+  return fetchWithAuth(`/api/notifications/${id}`, { method: "DELETE" });
+}
+
 // --- Admin API (authenticated, direct to backend) ---
 
 export async function fetchAdminDashboard() {
@@ -662,6 +705,30 @@ export async function fetchAdminEvents(params?: { page?: number; size?: number }
 
 export async function toggleAdminEventActive(eventId: number) {
   return fetchWithAuth(`/api/admin/events/${eventId}/toggle-active`, { method: "PATCH" });
+}
+
+export async function autoGenerateEvents(params: {
+  year: number;
+  month: number;
+  market: string;
+}): Promise<{ success: boolean; generated_count: number; events: any[] }> {
+  return fetchWithAuth("/api/admin/events/auto-generate", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+}
+
+// --- Navigation Order API ---
+
+export async function fetchNavOrder(): Promise<{ order: string[] }> {
+  return fetchJSON("/navigation");
+}
+
+export async function updateAdminNavOrder(order: string[]): Promise<{ ok: boolean; order: string[] }> {
+  return fetchWithAuth("/api/admin/navigation", {
+    method: "PUT",
+    body: JSON.stringify({ order }),
+  });
 }
 
 export function subscribePipelineStream(

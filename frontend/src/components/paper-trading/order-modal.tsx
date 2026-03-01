@@ -96,13 +96,13 @@ export function OrderModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/60" onClick={onClose} />
+      <div className="absolute inset-0 bg-[var(--overlay)]" onClick={onClose} />
       <div className="relative bg-[var(--card)] border border-[var(--card-border)] rounded-xl p-6 w-full max-w-md mx-4 shadow-2xl">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-bold">모의 매수</h3>
           <button
             onClick={onClose}
-            className="p-1 rounded hover:bg-white/10 transition-colors"
+            className="p-1 rounded hover:bg-[var(--surface-active)] transition-colors"
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="18" y1="6" x2="6" y2="18" />
@@ -113,7 +113,7 @@ export function OrderModal({
 
         <div className="space-y-4">
           {/* Stock info */}
-          <div className="bg-white/5 rounded-lg p-3">
+          <div className="bg-[var(--surface-hover)] rounded-lg p-3">
             <div className="flex items-center justify-between">
               <div>
                 <span className="font-medium">{name}</span>
@@ -153,7 +153,7 @@ export function OrderModal({
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setQuantity(Math.max(1, quantity - 1))}
-                className="w-10 h-10 rounded-lg bg-white/5 hover:bg-white/10 transition-colors flex items-center justify-center text-lg"
+                className="w-10 h-10 rounded-lg bg-[var(--surface-hover)] hover:bg-[var(--surface-active)] transition-colors flex items-center justify-center text-lg"
               >
                 -
               </button>
@@ -168,11 +168,11 @@ export function OrderModal({
                 }}
                 onFocus={(e) => e.target.select()}
                 onBlur={() => { if (quantity < 1) setQuantity(1); }}
-                className="flex-1 h-10 rounded-lg bg-white/5 border border-[var(--card-border)] px-3 text-center text-lg font-medium focus:outline-none focus:border-blue-500"
+                className="flex-1 h-10 rounded-lg bg-[var(--surface-hover)] border border-[var(--card-border)] px-3 text-center text-lg font-medium focus:outline-none focus:border-blue-500"
               />
               <button
                 onClick={() => setQuantity(quantity + 1)}
-                className="w-10 h-10 rounded-lg bg-white/5 hover:bg-white/10 transition-colors flex items-center justify-center text-lg"
+                className="w-10 h-10 rounded-lg bg-[var(--surface-hover)] hover:bg-[var(--surface-active)] transition-colors flex items-center justify-center text-lg"
               >
                 +
               </button>
@@ -186,7 +186,7 @@ export function OrderModal({
                   className={`flex-1 py-1 rounded text-xs transition-colors ${
                     quantity === q
                       ? "bg-blue-600 text-white"
-                      : "bg-white/5 text-[var(--muted)] hover:bg-white/10"
+                      : "bg-[var(--surface-hover)] text-[var(--muted)] hover:bg-[var(--surface-active)]"
                   }`}
                 >
                   {q}주
@@ -215,7 +215,7 @@ export function OrderModal({
           </div>
 
           {/* Total amount */}
-          <div className={`rounded-lg p-3 ${insufficientBalance ? "bg-red-400/10 border border-red-400/30" : "bg-white/5"}`}>
+          <div className={`rounded-lg p-3 ${insufficientBalance ? "bg-red-400/10 border border-red-400/30" : "bg-[var(--surface-hover)]"}`}>
             <div className="flex items-center justify-between">
               <span className="text-[var(--muted)] text-sm">총 매수 금액</span>
               <span className={`text-lg font-bold ${insufficientBalance ? "text-red-400" : ""}`}>

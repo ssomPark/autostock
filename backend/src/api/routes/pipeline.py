@@ -65,6 +65,14 @@ async def trigger_pipeline(
         }
 
 
+@router.post("/reset")
+async def reset_pipeline(user=Depends(get_admin_user)):
+    """Force reset pipeline state to idle. Admin only."""
+    await tracker.reset()
+    logger.info("Pipeline manually reset by admin")
+    return {"success": True, "message": "파이프라인 상태가 초기화되었습니다."}
+
+
 @router.get("/status")
 async def get_pipeline_status():
     """Get current pipeline status from tracker."""

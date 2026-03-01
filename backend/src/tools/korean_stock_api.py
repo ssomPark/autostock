@@ -52,8 +52,8 @@ def _ensure_kis_token() -> str:
             resp = httpx.post(url, json=body, timeout=10)
             resp.raise_for_status()
         except Exception as e:
-            _kis_token_fail_until = datetime.now() + timedelta(seconds=60)
-            logger.warning(f"KIS token request failed, cooldown 60s: {e}")
+            _kis_token_fail_until = datetime.now() + timedelta(seconds=10)
+            logger.warning(f"KIS token request failed, cooldown 10s: {e}")
             raise
 
         data = resp.json()
