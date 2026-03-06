@@ -27,6 +27,7 @@ from src.models.db_models import (
     AdRewardLogModel,
 )
 from src.services.market_data_service import MarketDataService, get_usd_krw_rate
+from src.utils.redis_cache import cache_get_json, cache_set_json
 from src.utils.stock_name_resolver import resolve_kr_name
 
 logger = logging.getLogger(__name__)
@@ -706,9 +707,6 @@ async def get_exchange_rate():
 
 # --- Leaderboard ---
 
-_leaderboard_cache: dict | None = None
-_leaderboard_cache_time: float = 0
-
 
 @router.get("/leaderboard")
 async def get_leaderboard(
@@ -716,37 +714,68 @@ async def get_leaderboard(
     session: AsyncSession = Depends(get_async_session),
 ):
     """수익률 랭킹 리더보드. 비로그인도 조회 가능."""
-    global _leaderboard_cache, _leaderboard_cache_time
-    now = time.time()
+    # Redis 캐시 확인
+    cached = await cache_get_json("leaderboard")
+    if cached:
+        return {**cached, "current_user_id": user.id if user else None}
 
-    if _leaderboard_cache and now - _leaderboard_cache_time < 300:
-        return {**_leaderboard_cache, "current_user_id": user.id if user else None}
-
+    # User + positions eager load (N+1 제거)
     result = await session.execute(
         select(PaperAccountModel)
-        .options(selectinload(PaperAccountModel.positions))
+        .options(
+            selectinload(PaperAccountModel.positions),
+            selectinload(PaperAccountModel.user),
+        )
         .where(PaperAccountModel.is_active == True)  # noqa: E712
     )
     accounts = result.scalars().all()
 
+    # trade_count 일괄 조회 (1개 쿼리로 N개 계좌 처리)
+    account_ids = [a.id for a in accounts]
+    trade_count_map: dict[int, int] = {}
+    if account_ids:
+        tc_result = await session.execute(
+            select(PaperTradeModel.account_id, func.count(PaperTradeModel.id))
+            .where(PaperTradeModel.account_id.in_(account_ids))
+            .group_by(PaperTradeModel.account_id)
+        )
+        trade_count_map = dict(tc_result.all())
+
+    # 유니크 티커 수집 → 병렬 가격 조회
+    unique_tickers: set[tuple[str, str]] = set()
+    for account in accounts:
+        for pos in account.positions:
+            unique_tickers.add((pos.ticker, pos.market))
+
+    async def _fetch_price(ticker: str, market: str):
+        try:
+            data = await asyncio.to_thread(
+                _market_data_svc.get_current_price, ticker, market
+            )
+            price = data.get("current_price", 0)
+            return (ticker, market), price if price and price > 0 else 0
+        except Exception:
+            return (ticker, market), 0
+
+    price_results = await asyncio.gather(
+        *[_fetch_price(t, m) for t, m in unique_tickers]
+    )
+    price_map = dict(price_results)
+
+    # 환율 1회만 조회
+    has_us = any(m in ("NYSE", "NASDAQ") for _, m in unique_tickers)
+    usd_rate = (await asyncio.to_thread(get_usd_krw_rate)) if has_us else 1
+
     entries = []
     for account in accounts:
-        # 포지션 평가금액 계산
         total_eval = account.cash_balance
         for pos in account.positions:
-            try:
-                price_data = await asyncio.to_thread(
-                    _market_data_svc.get_current_price, pos.ticker, pos.market
-                )
-                current_price = price_data.get("current_price", 0)
-                if not current_price or current_price <= 0:
-                    current_price = pos.avg_buy_price
-            except Exception:
+            current_price = price_map.get((pos.ticker, pos.market), 0)
+            if not current_price or current_price <= 0:
                 current_price = pos.avg_buy_price
 
             if pos.market in ("NYSE", "NASDAQ"):
-                rate = await asyncio.to_thread(get_usd_krw_rate)
-                total_eval += current_price * pos.quantity * rate
+                total_eval += current_price * pos.quantity * usd_rate
             else:
                 total_eval += current_price * pos.quantity
 
@@ -758,13 +787,7 @@ async def get_leaderboard(
             else 0
         )
 
-        trade_count = await session.scalar(
-            select(func.count(PaperTradeModel.id)).where(
-                PaperTradeModel.account_id == account.id
-            )
-        )
-
-        user_obj = await session.get(UserModel, account.user_id)
+        user_obj = account.user
         entries.append(
             {
                 "user_id": account.user_id,
@@ -775,7 +798,7 @@ async def get_leaderboard(
                 "total_value": round(total_eval, 0),
                 "total_pnl": round(total_pnl, 0),
                 "return_pct": round(return_pct, 2),
-                "trade_count": trade_count or 0,
+                "trade_count": trade_count_map.get(account.id, 0),
                 "position_count": len(account.positions),
             }
         )
@@ -784,11 +807,10 @@ async def get_leaderboard(
     for i, e in enumerate(entries):
         e["rank"] = i + 1
 
-    cached = {"entries": entries, "updated_at": datetime.now().isoformat()}
-    _leaderboard_cache = cached
-    _leaderboard_cache_time = now
+    lb_result = {"entries": entries, "updated_at": datetime.now().isoformat()}
+    await cache_set_json("leaderboard", lb_result, ttl=300)
 
-    return {**cached, "current_user_id": user.id if user else None}
+    return {**lb_result, "current_user_id": user.id if user else None}
 
 
 # --- Ad Reward ---

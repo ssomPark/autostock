@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Query
 
 from src.services.news_service import NewsService
+from src.utils.redis_cache import cache_get_json, cache_set_json
 
 router = APIRouter()
 news_service = NewsService()
@@ -16,7 +17,13 @@ async def get_news(
     limit: int = Query(20, ge=1, le=100),
 ):
     """Get recent news articles."""
+    cache_key = f"news:latest:{limit}"
+    cached = await cache_get_json(cache_key)
+    if cached:
+        return {"success": True, "data": cached, "count": len(cached), "cached": True}
+
     articles = news_service.get_recent_news(limit=limit)
+    await cache_set_json(cache_key, articles, ttl=300)
     return {"success": True, "data": articles, "count": len(articles)}
 
 
