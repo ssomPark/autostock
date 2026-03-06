@@ -180,6 +180,8 @@ class UserModel(Base):
     paper_accounts = relationship("PaperAccountModel", back_populates="user", cascade="all, delete-orphan")
     notifications = relationship("NotificationModel", back_populates="user", cascade="all, delete-orphan")
     portfolios = relationship("PortfolioModel", back_populates="user", cascade="all, delete-orphan")
+    community_posts = relationship("CommunityPostModel", back_populates="user", cascade="all, delete-orphan")
+    community_comments = relationship("CommunityCommentModel", back_populates="user", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("ix_users_provider_provider_id", "provider", "provider_id", unique=True),
@@ -259,6 +261,7 @@ class PaperAccountModel(Base):
     user = relationship("UserModel", back_populates="paper_accounts")
     positions = relationship("PaperPositionModel", back_populates="account", cascade="all, delete-orphan")
     trades = relationship("PaperTradeModel", back_populates="account", cascade="all, delete-orphan")
+    orders = relationship("PaperOrderModel", back_populates="account", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("ix_paper_accounts_user_id", "user_id"),
@@ -320,6 +323,41 @@ class PaperTradeModel(Base):
         Index("ix_paper_trades_ticker", "ticker"),
         Index("ix_paper_trades_executed_at", "executed_at"),
         Index("ix_paper_trades_source", "source"),
+    )
+
+
+class PaperOrderModel(Base):
+    """모의 투자 예약/지정가/손절 주문."""
+    __tablename__ = "paper_orders"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    account_id = Column(Integer, ForeignKey("paper_accounts.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    ticker = Column(String(20), nullable=False)
+    name = Column(String(200), nullable=False)
+    market = Column(String(10), nullable=False)
+    quantity = Column(Integer, nullable=False)
+    order_type = Column(String(20), nullable=False)  # "limit_sell" | "stop_loss" | "scheduled"
+    target_price = Column(Float, nullable=True)  # limit_sell: 이 가격 이상이면 매도
+    stop_price = Column(Float, nullable=True)  # stop_loss: 이 가격 이하이면 매도
+    scheduled_at = Column(DateTime, nullable=True)  # scheduled: 이 시각에 매도
+    oco_group_id = Column(String(50), nullable=True)  # OCO 그룹 (한쪽 체결 시 나머지 취소)
+    status = Column(String(20), nullable=False, default="pending")  # "pending" | "executed" | "cancelled"
+    executed_price = Column(Float, nullable=True)
+    executed_at = Column(DateTime, nullable=True)
+    trade_id = Column(Integer, nullable=True)
+    cancel_reason = Column(String(100), nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    account = relationship("PaperAccountModel")
+
+    __table_args__ = (
+        Index("ix_paper_orders_account_id", "account_id"),
+        Index("ix_paper_orders_status", "status"),
+        Index("ix_paper_orders_user_status", "user_id", "status"),
+        Index("ix_paper_orders_ticker_status", "ticker", "status"),
+        Index("ix_paper_orders_oco_group", "oco_group_id"),
     )
 
 
@@ -467,7 +505,7 @@ class PortfolioHoldingModel(Base):
     ticker = Column(String(20), nullable=False)
     name = Column(String(200), nullable=False)
     market = Column(String(10), nullable=False)
-    quantity = Column(Integer, nullable=False, default=0)
+    quantity = Column(Float, nullable=False, default=0)
     avg_buy_price = Column(Float, nullable=False, default=0.0)
     currency = Column(String(10), nullable=False, default="KRW")
     added_at = Column(DateTime, default=datetime.now)
@@ -477,4 +515,93 @@ class PortfolioHoldingModel(Base):
 
     __table_args__ = (
         Index("ix_portfolio_holdings_portfolio_ticker", "portfolio_id", "ticker", unique=True),
+    )
+
+
+class UpdatePostModel(Base):
+    """사이트 업데이트 게시판."""
+    __tablename__ = "update_posts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    title = Column(String(300), nullable=False)
+    content = Column(Text, nullable=False)
+    category = Column(String(20), nullable=False, default="announcement")  # feature/bugfix/announcement/maintenance
+    is_published = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    __table_args__ = (
+        Index("ix_update_posts_created", "created_at"),
+    )
+
+
+class CommunityPostModel(Base):
+    """커뮤니티 게시판 글."""
+    __tablename__ = "community_posts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    title = Column(String(300), nullable=False)
+    content = Column(Text, nullable=False)
+    category = Column(String(20), nullable=False, default="discussion")  # discussion/question/tips/proof
+    view_count = Column(Integer, default=0)
+    comment_count = Column(Integer, default=0)
+    is_pinned = Column(Boolean, default=False)
+    is_deleted = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    user = relationship("UserModel", back_populates="community_posts")
+    comments = relationship("CommunityCommentModel", back_populates="post", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("ix_community_posts_user_id", "user_id"),
+        Index("ix_community_posts_list", "is_deleted", "category", "created_at"),
+        Index("ix_community_posts_pinned", "is_deleted", "is_pinned"),
+    )
+
+
+class CommunityCommentModel(Base):
+    """커뮤니티 댓글."""
+    __tablename__ = "community_comments"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    post_id = Column(Integer, ForeignKey("community_posts.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    content = Column(Text, nullable=False)
+    is_deleted = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    post = relationship("CommunityPostModel", back_populates="comments")
+    user = relationship("UserModel", back_populates="community_comments")
+
+    __table_args__ = (
+        Index("ix_community_comments_post_created", "post_id", "created_at"),
+        Index("ix_community_comments_user_id", "user_id"),
+    )
+
+
+class DailyMetricSnapshotModel(Base):
+    """일일 지표 스냅샷 (매일 자정 KST 기준 집계)."""
+    __tablename__ = "daily_metric_snapshots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    date = Column(DateTime, nullable=False, unique=True)
+    total_users = Column(Integer, default=0)
+    new_users = Column(Integer, default=0)
+    active_users = Column(Integer, default=0)
+    analysis_count = Column(Integer, default=0)
+    trade_count = Column(Integer, default=0)
+    pin_count = Column(Integer, default=0)
+    portfolio_count = Column(Integer, default=0)
+    anonymous_ips = Column(Integer, default=0)
+    pipeline_runs = Column(Integer, default=0)
+    page_views = Column(Integer, default=0)
+    unique_visitors = Column(Integer, default=0)
+    unique_visitors_anon = Column(Integer, default=0)
+    created_at = Column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        Index("ix_daily_metric_snapshots_date", "date"),
     )

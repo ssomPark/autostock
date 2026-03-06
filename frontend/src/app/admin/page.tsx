@@ -7,6 +7,8 @@ import {
   fetchAdminDashboard,
   fetchAdminUsers,
   fetchAdminUserDetail,
+  fetchAdminMetrics,
+  triggerAdminMetricsSnapshot,
   fetchAdminPaperTradingStats,
   fetchAdminSavedAnalysesStats,
   fetchAdminEvents,
@@ -19,9 +21,15 @@ import {
   fetchPipelineHistory,
   fetchNavOrder,
   updateAdminNavOrder,
+  fetchAdminUpdates,
+  createAdminUpdate,
+  updateAdminUpdate,
+  deleteAdminUpdate,
+  fetchAdminTopPages,
 } from "@/lib/api";
+import type { UpdatePost } from "@/lib/api";
 
-type Tab = "dashboard" | "users" | "analyses" | "paper-trading" | "events" | "pipeline" | "navigation";
+type Tab = "dashboard" | "metrics" | "users" | "analyses" | "paper-trading" | "events" | "updates" | "pipeline" | "navigation";
 
 function formatNum(n: number) {
   return n.toLocaleString("ko-KR");
@@ -61,24 +69,323 @@ function DashboardTab() {
   if (loading) return <LoadingSkeleton />;
   if (!data) return <ErrorMessage msg="대시보드 데이터를 불러올 수 없습니다." />;
 
+  const v = data.visitors;
+
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-      <SummaryCard icon="👥" title="전체 사용자" value={data.users.total} sub={`오늘 +${data.users.today}`} />
-      <SummaryCard icon="📈" title="전체 거래" value={data.trades.total} sub={`오늘 +${data.trades.today}`} />
-      <SummaryCard
-        icon="🔍"
-        title="분석 기록"
-        value={data.saved_analyses?.total ?? 0}
-        sub={`오늘 +${data.saved_analyses?.today ?? 0}`}
-      />
-      <SummaryCard
-        icon="⭐"
-        title="워치리스트"
-        value={data.watchlist?.total_items ?? 0}
-        sub={`${data.watchlist?.unique_users ?? 0}명 이용`}
-      />
-      <SummaryCard icon="📅" title="활성 이벤트" value={data.events.active} />
-      <SummaryCard icon="⚙️" title="파이프라인 (7일)" value={data.pipeline.runs_this_week} />
+    <div className="space-y-4">
+      {/* Visitor cards */}
+      {v && (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <SummaryCard icon="🌐" title="오늘 방문자" value={v.today_total} sub="전체 (IP 기준)" />
+          <SummaryCard icon="👤" title="비로그인" value={v.today_anon} sub={v.today_total > 0 ? `${((v.today_anon / v.today_total) * 100).toFixed(0)}%` : "0%"} />
+          <SummaryCard icon="🔑" title="로그인" value={v.today_logged_in} sub={v.today_total > 0 ? `${((v.today_logged_in / v.today_total) * 100).toFixed(0)}%` : "0%"} />
+          <SummaryCard icon="📄" title="페이지뷰" value={v.page_views} sub="API 요청 수" />
+        </div>
+      )}
+
+      {/* Existing cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <SummaryCard icon="👥" title="전체 사용자" value={data.users.total} sub={`오늘 +${data.users.today}`} />
+        <SummaryCard icon="📈" title="전체 거래" value={data.trades.total} sub={`오늘 +${data.trades.today}`} />
+        <SummaryCard
+          icon="🔍"
+          title="분석 기록"
+          value={data.saved_analyses?.total ?? 0}
+          sub={`오늘 +${data.saved_analyses?.today ?? 0}`}
+        />
+        <SummaryCard
+          icon="⭐"
+          title="워치리스트"
+          value={data.watchlist?.total_items ?? 0}
+          sub={`${data.watchlist?.unique_users ?? 0}명 이용`}
+        />
+        <SummaryCard icon="📅" title="활성 이벤트" value={data.events.active} />
+        <SummaryCard icon="⚙️" title="파이프라인 (7일)" value={data.pipeline.runs_this_week} />
+      </div>
+    </div>
+  );
+}
+
+// ─── Mini Bar Chart (CSS-only) ──────────────────────────────
+function MiniBarChart({
+  data,
+  dataKey,
+  label,
+  color = "bg-blue-500",
+}: {
+  data: { date: string; [k: string]: number | string }[];
+  dataKey: string;
+  label: string;
+  color?: string;
+}) {
+  const values = data.map((d) => (typeof d[dataKey] === "number" ? (d[dataKey] as number) : 0));
+  const max = Math.max(...values, 1);
+
+  // Label interval based on data length
+  const labelInterval = data.length > 30 ? 10 : data.length > 14 ? 5 : 1;
+
+  return (
+    <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4">
+      <p className="text-sm font-medium mb-3">{label}</p>
+      <div className="flex gap-[2px] h-28">
+        {data.map((d, i) => {
+          const v = values[i];
+          const pct = (v / max) * 100;
+          return (
+            <div key={i} className="flex-1 flex flex-col items-center justify-end group relative">
+              {/* Tooltip */}
+              <div className="absolute bottom-full mb-1 hidden group-hover:block bg-[var(--card)] border border-[var(--card-border)] rounded px-2 py-1 text-xs shadow-lg whitespace-nowrap z-10">
+                {d.date}: {formatNum(v)}
+              </div>
+              <div
+                className={`w-full rounded-t ${color} min-h-[2px] transition-all`}
+                style={{ height: `${Math.max(pct, 2)}%` }}
+              />
+            </div>
+          );
+        })}
+      </div>
+      {/* X-axis labels */}
+      <div className="flex gap-[2px] mt-1">
+        {data.map((d, i) => (
+          <div key={i} className="flex-1 text-center">
+            {i % labelInterval === 0 ? (
+              <span className="text-[10px] text-[var(--muted)]">{d.date}</span>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─── Usage Bar ──────────────────────────────────────────────
+function UsageBar({ icon, label, count, max }: { icon: string; label: string; count: number; max: number }) {
+  const pct = max > 0 ? (count / max) * 100 : 0;
+  return (
+    <div className="flex items-center gap-3">
+      <span className="text-lg">{icon}</span>
+      <div className="flex-1">
+        <div className="flex justify-between text-sm mb-1">
+          <span>{label}</span>
+          <span className="font-semibold">{formatNum(count)}</span>
+        </div>
+        <div className="h-2 bg-[var(--card-border)] rounded-full overflow-hidden">
+          <div className="h-full bg-blue-500 rounded-full transition-all" style={{ width: `${Math.min(pct, 100)}%` }} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Segment Bar ────────────────────────────────────────────
+function SegmentBar({ label, value, total, color }: { label: string; value: number; total: number; color: string }) {
+  const pct = total > 0 ? (value / total) * 100 : 0;
+  return (
+    <div className="space-y-1">
+      <div className="flex justify-between text-sm">
+        <span>{label}</span>
+        <span className="text-[var(--muted)]">{formatNum(value)}명 ({pct.toFixed(1)}%)</span>
+      </div>
+      <div className="h-3 bg-[var(--card-border)] rounded-full overflow-hidden">
+        <div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
+// ─── Metrics Tab ────────────────────────────────────────────
+function MetricsTab() {
+  const [period, setPeriod] = useState<7 | 30 | 90>(7);
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [snapshotLoading, setSnapshotLoading] = useState(false);
+  const [topPages, setTopPages] = useState<{ path: string; count: number }[]>([]);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [res, tp] = await Promise.all([
+        fetchAdminMetrics(period),
+        fetchAdminTopPages().catch(() => ({ pages: [] })),
+      ]);
+      setData(res);
+      setTopPages(tp.pages || []);
+    } catch {
+      setData(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [period]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const handleSnapshot = async () => {
+    setSnapshotLoading(true);
+    try {
+      await triggerAdminMetricsSnapshot();
+      await load();
+    } catch {} finally {
+      setSnapshotLoading(false);
+    }
+  };
+
+  if (loading) return <LoadingSkeleton />;
+  if (!data) return <ErrorMessage msg="지표 데이터를 불러올 수 없습니다." />;
+
+  const s = data.summary;
+  const fu = data.feature_usage;
+  const eng = data.engagement;
+  const seg = data.segmentation;
+  const daily = data.daily || [];
+
+  const maxUsage = Math.max(fu.analyses, fu.trades, fu.pins, 1);
+
+  return (
+    <div className="space-y-6">
+      {/* Period selector + Snapshot button */}
+      <div className="flex items-center justify-between">
+        <div className="flex gap-1">
+          {([7, 30, 90] as const).map((p) => (
+            <button
+              key={p}
+              onClick={() => setPeriod(p)}
+              className={`px-4 py-1.5 rounded text-sm font-medium transition-colors ${
+                period === p
+                  ? "bg-blue-600 text-white"
+                  : "bg-[var(--card)] text-[var(--muted)] hover:text-[var(--foreground)] border border-[var(--card-border)]"
+              }`}
+            >
+              {p}일
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={handleSnapshot}
+          disabled={snapshotLoading}
+          className="px-3 py-1.5 text-xs bg-[var(--card)] border border-[var(--card-border)] rounded hover:bg-[var(--card-border)] transition-colors disabled:opacity-50"
+        >
+          {snapshotLoading ? "수집 중..." : "스냅샷 수집"}
+        </button>
+      </div>
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+        <SummaryCard icon="📊" title="DAU (오늘)" value={s.dau} />
+        <SummaryCard icon="📈" title="MAU (30일)" value={s.mau} />
+        <SummaryCard
+          icon="🆕"
+          title="신규 가입"
+          value={s.new_users}
+          sub={s.growth_rate > 0 ? `+${s.growth_rate}%` : s.growth_rate < 0 ? `${s.growth_rate}%` : "0%"}
+        />
+        <SummaryCard icon="👥" title="활성 사용자" value={s.active_users} sub={`/ ${s.total_users}명`} />
+        <SummaryCard icon="🔄" title="리텐션" value={`${s.retention_rate}%`} />
+        <SummaryCard icon="🌐" title="일평균 방문자" value={s.avg_visitors ?? 0} sub={`${period}일 기준`} />
+        <SummaryCard icon="📄" title="총 페이지뷰" value={s.total_page_views ?? 0} sub={`${period}일 합계`} />
+      </div>
+
+      {/* DAU Trend Chart */}
+      {daily.length > 0 && (
+        <MiniBarChart data={daily} dataKey="active_users" label="일별 DAU 추세" color="bg-blue-500" />
+      )}
+
+      {/* Feature usage + Segmentation side by side */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Feature usage */}
+        <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4 space-y-3">
+          <p className="text-sm font-medium mb-1">기능별 사용량 ({period}일)</p>
+          <UsageBar icon="🔍" label="분석" count={fu.analyses} max={maxUsage} />
+          <UsageBar icon="💹" label="거래" count={fu.trades} max={maxUsage} />
+          <UsageBar icon="📌" label="핀" count={fu.pins} max={maxUsage} />
+        </div>
+
+        {/* User segmentation */}
+        <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4 space-y-3">
+          <p className="text-sm font-medium mb-1">사용자 세분화</p>
+          <SegmentBar label="활성 사용자" value={seg.active_logged_in} total={seg.registered} color="bg-green-500" />
+          <SegmentBar label="비활성 사용자" value={seg.inactive} total={seg.registered} color="bg-gray-500" />
+          <div className="border-t border-[var(--card-border)] pt-3 mt-3">
+            <p className="text-xs text-[var(--muted)] mb-2">참여도 (활성 사용자당)</p>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-lg font-bold">{eng.avg_analyses_per_user}</p>
+                <p className="text-xs text-[var(--muted)]">평균 분석 횟수</p>
+              </div>
+              <div>
+                <p className="text-lg font-bold">{eng.avg_trades_per_user}</p>
+                <p className="text-xs text-[var(--muted)]">평균 거래 횟수</p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* New users trend + Analysis/Trade trend */}
+      {daily.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <MiniBarChart data={daily} dataKey="new_users" label="신규 가입 추세" color="bg-green-500" />
+          <MiniBarChart data={daily} dataKey="analysis_count" label="분석 추세" color="bg-purple-500" />
+        </div>
+      )}
+
+      {/* Trade + Pipeline trend */}
+      {daily.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <MiniBarChart data={daily} dataKey="trade_count" label="거래 추세" color="bg-amber-500" />
+          <MiniBarChart data={daily} dataKey="pipeline_runs" label="파이프라인 실행 추세" color="bg-cyan-500" />
+        </div>
+      )}
+
+      {/* Visitor trends */}
+      {daily.length > 0 && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <MiniBarChart data={daily} dataKey="unique_visitors" label="일별 방문자 추세" color="bg-teal-500" />
+          <MiniBarChart data={daily} dataKey="page_views" label="일별 페이지뷰 추세" color="bg-indigo-500" />
+        </div>
+      )}
+
+      {/* Visitor ratio + Top pages */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Anon vs Logged-in ratio from snapshots */}
+        {daily.length > 0 && (() => {
+          const totalVisitors = daily.reduce((sum: number, d: any) => sum + (d.unique_visitors || 0), 0);
+          const totalAnon = daily.reduce((sum: number, d: any) => sum + (d.unique_visitors_anon || 0), 0);
+          const totalLoggedIn = totalVisitors - totalAnon;
+          return (
+            <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4 space-y-3">
+              <p className="text-sm font-medium mb-1">방문자 구성 ({period}일 합계)</p>
+              <SegmentBar label="비로그인 방문자" value={totalAnon} total={totalVisitors || 1} color="bg-orange-500" />
+              <SegmentBar label="로그인 사용자" value={totalLoggedIn} total={totalVisitors || 1} color="bg-green-500" />
+            </div>
+          );
+        })()}
+
+        {/* Top pages */}
+        {topPages.length > 0 && (
+          <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4">
+            <p className="text-sm font-medium mb-3">오늘 인기 페이지 TOP 10</p>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-[var(--card-border)] text-left text-[var(--muted)]">
+                  <th className="px-2 py-2 font-medium">#</th>
+                  <th className="px-2 py-2 font-medium">경로</th>
+                  <th className="px-2 py-2 font-medium text-right">요청 수</th>
+                </tr>
+              </thead>
+              <tbody>
+                {topPages.map((p, i) => (
+                  <tr key={p.path} className="border-b border-[var(--card-border)] last:border-0">
+                    <td className="px-2 py-2 text-blue-400 font-bold">{i + 1}</td>
+                    <td className="px-2 py-2 font-mono text-xs truncate max-w-[200px]">{p.path}</td>
+                    <td className="px-2 py-2 text-right">{formatNum(p.count)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -370,7 +677,7 @@ function AnalysesTab() {
                       <span className={`px-2 py-0.5 rounded text-xs font-medium ${signalColors[a.signal] ?? "bg-gray-500/20 text-gray-400"}`}>{a.signal}</span>
                     </td>
                     <td className={`px-3 py-2 font-bold ${gradeColors[a.grade] ?? "text-gray-400"}`}>{a.grade}</td>
-                    <td className="px-3 py-2 hidden sm:table-cell text-[var(--muted)]">{(a.confidence * 100).toFixed(0)}%</td>
+                    <td className="px-3 py-2 hidden sm:table-cell text-[var(--muted)]">{a.confidence?.toFixed(0) ?? "-"}%</td>
                     <td className="px-3 py-2 hidden md:table-cell text-[var(--muted)]">{a.analyzed_at?.split("T")[0]}</td>
                   </tr>
                 ))}
@@ -601,6 +908,245 @@ function EventsTab() {
   );
 }
 
+// ─── Updates Tab ────────────────────────────────────────────
+
+const UPDATE_CATEGORIES = [
+  { value: "feature", label: "기능 추가", color: "bg-blue-500/20 text-blue-400" },
+  { value: "bugfix", label: "버그 수정", color: "bg-red-500/20 text-red-400" },
+  { value: "announcement", label: "공지", color: "bg-amber-500/20 text-amber-400" },
+  { value: "maintenance", label: "점검", color: "bg-purple-500/20 text-purple-400" },
+];
+
+function getCategoryStyle(cat: string) {
+  return UPDATE_CATEGORIES.find((c) => c.value === cat)?.color ?? "bg-gray-500/20 text-gray-400";
+}
+function getCategoryLabel(cat: string) {
+  return UPDATE_CATEGORIES.find((c) => c.value === cat)?.label ?? cat;
+}
+
+function UpdatesTab() {
+  const [posts, setPosts] = useState<UpdatePost[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [loading, setLoading] = useState(true);
+
+  // Form state
+  const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [formTitle, setFormTitle] = useState("");
+  const [formContent, setFormContent] = useState("");
+  const [formCategory, setFormCategory] = useState("announcement");
+  const [formPublished, setFormPublished] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetchAdminUpdates({ page, size: 20 });
+      setPosts(res.posts);
+      setTotal(res.total);
+    } catch { /* ignore */ }
+    setLoading(false);
+  }, [page]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const totalPages = Math.ceil(total / 20);
+
+  const resetForm = () => {
+    setEditingId(null);
+    setFormTitle("");
+    setFormContent("");
+    setFormCategory("announcement");
+    setFormPublished(true);
+    setShowForm(false);
+  };
+
+  const openCreate = () => {
+    resetForm();
+    setShowForm(true);
+  };
+
+  const openEdit = (p: UpdatePost) => {
+    setEditingId(p.id);
+    setFormTitle(p.title);
+    setFormContent(p.content);
+    setFormCategory(p.category);
+    setFormPublished(p.is_published);
+    setShowForm(true);
+  };
+
+  const handleSave = async () => {
+    if (!formTitle.trim() || !formContent.trim()) return;
+    setSaving(true);
+    try {
+      const data = { title: formTitle.trim(), content: formContent.trim(), category: formCategory, is_published: formPublished };
+      if (editingId) {
+        await updateAdminUpdate(editingId, data);
+      } else {
+        await createAdminUpdate(data);
+      }
+      resetForm();
+      load();
+    } catch { /* ignore */ }
+    setSaving(false);
+  };
+
+  const handleDelete = async (id: number) => {
+    if (!confirm("정말 삭제하시겠습니까?")) return;
+    try {
+      await deleteAdminUpdate(id);
+      load();
+    } catch { /* ignore */ }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-[var(--muted)]">총 {total}개</p>
+        <button
+          onClick={openCreate}
+          className="px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-colors"
+        >
+          + 새 게시글
+        </button>
+      </div>
+
+      {/* Form */}
+      {showForm && (
+        <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4 space-y-3">
+          <h3 className="text-sm font-semibold">{editingId ? "게시글 수정" : "새 게시글 작성"}</h3>
+          <input
+            type="text"
+            placeholder="제목"
+            value={formTitle}
+            onChange={(e) => setFormTitle(e.target.value)}
+            className="w-full px-3 py-2 rounded bg-[var(--surface-hover)] border border-[var(--card-border)] text-sm"
+          />
+          <div className="flex flex-wrap gap-3">
+            <div>
+              <label className="block text-xs text-[var(--muted)] mb-1">카테고리</label>
+              <select
+                value={formCategory}
+                onChange={(e) => setFormCategory(e.target.value)}
+                className="px-3 py-1.5 rounded bg-[var(--surface-hover)] border border-[var(--card-border)] text-sm"
+              >
+                {UPDATE_CATEGORIES.map((c) => (
+                  <option key={c.value} value={c.value}>{c.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex items-end">
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formPublished}
+                  onChange={(e) => setFormPublished(e.target.checked)}
+                  className="w-4 h-4 rounded"
+                />
+                발행
+              </label>
+            </div>
+          </div>
+          <textarea
+            placeholder="내용"
+            value={formContent}
+            onChange={(e) => setFormContent(e.target.value)}
+            rows={5}
+            className="w-full px-3 py-2 rounded bg-[var(--surface-hover)] border border-[var(--card-border)] text-sm resize-y"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={handleSave}
+              disabled={saving || !formTitle.trim() || !formContent.trim()}
+              className="px-4 py-1.5 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium disabled:opacity-50 transition-colors"
+            >
+              {saving ? "저장 중..." : editingId ? "수정" : "작성"}
+            </button>
+            <button
+              onClick={resetForm}
+              className="px-4 py-1.5 rounded bg-[var(--surface-hover)] text-sm transition-colors hover:bg-[var(--surface-active)]"
+            >
+              취소
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Table */}
+      {loading ? <LoadingSkeleton /> : (
+        <>
+          <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-[var(--card-border)] text-left text-[var(--muted)]">
+                  <th className="px-4 py-3 font-medium">ID</th>
+                  <th className="px-4 py-3 font-medium">제목</th>
+                  <th className="px-4 py-3 font-medium hidden sm:table-cell">카테고리</th>
+                  <th className="px-4 py-3 font-medium hidden md:table-cell">작성일</th>
+                  <th className="px-4 py-3 font-medium">상태</th>
+                  <th className="px-4 py-3 font-medium">액션</th>
+                </tr>
+              </thead>
+              <tbody>
+                {posts.map((p) => (
+                  <tr key={p.id} className="border-b border-[var(--card-border)] last:border-0 hover:bg-[var(--surface-hover)]">
+                    <td className="px-4 py-3">{p.id}</td>
+                    <td className="px-4 py-3 max-w-[200px] truncate">{p.title}</td>
+                    <td className="px-4 py-3 hidden sm:table-cell">
+                      <span className={`px-2 py-0.5 rounded text-xs font-medium ${getCategoryStyle(p.category)}`}>
+                        {getCategoryLabel(p.category)}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 hidden md:table-cell text-[var(--muted)]">
+                      {p.created_at?.split("T")[0]}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                        p.is_published ? "bg-green-500/20 text-green-400" : "bg-gray-500/20 text-gray-400"
+                      }`}>
+                        {p.is_published ? "발행" : "미발행"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex gap-1">
+                        <button
+                          onClick={() => openEdit(p)}
+                          className="px-2 py-1 rounded text-xs bg-[var(--surface-hover)] hover:bg-[var(--surface-active)] transition-colors"
+                        >
+                          수정
+                        </button>
+                        <button
+                          onClick={() => handleDelete(p.id)}
+                          className="px-2 py-1 rounded text-xs bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
+                        >
+                          삭제
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {posts.length === 0 && (
+                  <tr><td colSpan={6} className="px-4 py-8 text-center text-[var(--muted)]">게시글 없음</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-2">
+              <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1} className="px-3 py-1.5 rounded bg-[var(--surface-hover)] text-sm disabled:opacity-30">이전</button>
+              <span className="text-sm text-[var(--muted)]">{page} / {totalPages}</span>
+              <button onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages} className="px-3 py-1.5 rounded bg-[var(--surface-hover)] text-sm disabled:opacity-30">다음</button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ─── Pipeline Types & Constants ─────────────────────────────
 
 interface PipelineStepState {
@@ -800,7 +1346,7 @@ function PipelineHistoryPanel() {
 
   function fmtTime(iso: string | null): string {
     if (!iso) return "-";
-    return new Date(iso).toLocaleString("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+    return new Date(iso).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
   }
 
   const statusBadge = (status: string) => {
@@ -864,6 +1410,7 @@ const NAV_ITEM_META: Record<string, { label: string; icon: string }> = {
   "/news": { label: "뉴스", icon: "📰" },
   "/compare": { label: "종목 비교", icon: "⚖️" },
   "/portfolio": { label: "포트폴리오", icon: "📑" },
+  "/community": { label: "게시판", icon: "💬" },
   "/admin": { label: "관리자", icon: "🛡️" },
 };
 
@@ -1219,10 +1766,12 @@ export default function AdminPage() {
 
   const tabs: { key: Tab; label: string }[] = [
     { key: "dashboard", label: "대시보드" },
+    { key: "metrics", label: "핵심 지표" },
     { key: "users", label: "사용자" },
     { key: "analyses", label: "분석 기록" },
     { key: "paper-trading", label: "모의 투자" },
     { key: "events", label: "이벤트" },
+    { key: "updates", label: "업데이트" },
     { key: "pipeline", label: "파이프라인" },
     { key: "navigation", label: "메뉴 관리" },
   ];
@@ -1253,10 +1802,12 @@ export default function AdminPage() {
 
       {/* Tab Content */}
       {tab === "dashboard" && <DashboardTab />}
+      {tab === "metrics" && <MetricsTab />}
       {tab === "users" && <UsersTab />}
       {tab === "analyses" && <AnalysesTab />}
       {tab === "paper-trading" && <PaperTradingTab />}
       {tab === "events" && <EventsTab />}
+      {tab === "updates" && <UpdatesTab />}
       {tab === "pipeline" && <PipelineTab />}
       {tab === "navigation" && <NavigationTab />}
     </div>
