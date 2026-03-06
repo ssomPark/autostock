@@ -7,7 +7,7 @@ import logging
 import random
 import time
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -23,6 +23,7 @@ from src.models.db_models import (
     PaperAccountModel,
     PaperPositionModel,
     PaperTradeModel,
+    PaperOrderModel,
     AdRewardLogModel,
 )
 from src.services.market_data_service import MarketDataService, get_usd_krw_rate
@@ -72,6 +73,24 @@ class AdRewardClaimIn(BaseModel):
     account_id: int
 
 
+class CreateOrderIn(BaseModel):
+    account_id: int
+    ticker: str
+    quantity: int
+    order_type: str  # "limit_sell" | "stop_loss" | "scheduled"
+    target_price: float | None = None
+    stop_price: float | None = None
+    scheduled_at: str | None = None  # ISO format
+
+
+class CreateOCOOrderIn(BaseModel):
+    account_id: int
+    ticker: str
+    quantity: int
+    target_price: float  # 지정가 (이 가격 이상이면 매도)
+    stop_price: float  # 손절가 (이 가격 이하이면 매도)
+
+
 class DepositIn(BaseModel):
     account_id: int
     amount: int  # KRW 단위
@@ -119,6 +138,55 @@ def _serialize_trade(trade: PaperTradeModel) -> dict:
         "recommendation_grade": trade.recommendation_grade,
         "executed_at": trade.executed_at.isoformat() if trade.executed_at else None,
     }
+
+
+def _serialize_order(order: PaperOrderModel) -> dict:
+    return {
+        "id": order.id,
+        "account_id": order.account_id,
+        "ticker": order.ticker,
+        "name": order.name,
+        "market": order.market,
+        "quantity": order.quantity,
+        "order_type": order.order_type,
+        "target_price": order.target_price,
+        "stop_price": order.stop_price,
+        "scheduled_at": order.scheduled_at.isoformat() if order.scheduled_at else None,
+        "oco_group_id": order.oco_group_id,
+        "status": order.status,
+        "executed_price": order.executed_price,
+        "executed_at": order.executed_at.isoformat() if order.executed_at else None,
+        "trade_id": order.trade_id,
+        "cancel_reason": order.cancel_reason,
+        "created_at": order.created_at.isoformat() if order.created_at else None,
+        "updated_at": order.updated_at.isoformat() if order.updated_at else None,
+    }
+
+
+async def _cancel_excess_orders(
+    session: AsyncSession, account_id: int, ticker: str, remaining_qty: int,
+) -> int:
+    """잔량 초과하는 pending 주문을 FIFO 순으로 취소. 반환: 취소 건수."""
+    result = await session.execute(
+        select(PaperOrderModel)
+        .where(
+            PaperOrderModel.account_id == account_id,
+            PaperOrderModel.ticker == ticker,
+            PaperOrderModel.status == "pending",
+        )
+        .order_by(PaperOrderModel.created_at.asc())
+    )
+    orders = result.scalars().all()
+    pending_total = 0
+    cancelled = 0
+    for order in orders:
+        pending_total += order.quantity
+        if pending_total > remaining_qty:
+            order.status = "cancelled"
+            order.cancel_reason = "position_sold"
+            order.updated_at = datetime.now()
+            cancelled += 1
+    return cancelled
 
 
 async def _verify_account_owner(
@@ -234,7 +302,10 @@ async def reset_account(
     session: AsyncSession = Depends(get_async_session),
 ):
     account = await _verify_account_owner(account_id, user, session)
-    # Delete positions and trades
+    # Delete positions, trades, and pending orders
+    await session.execute(
+        delete(PaperOrderModel).where(PaperOrderModel.account_id == account_id)
+    )
     await session.execute(
         delete(PaperPositionModel).where(PaperPositionModel.account_id == account_id)
     )
@@ -413,7 +484,8 @@ async def execute_sell(
     # Update position (total_invested는 KRW 기준 차감)
     position.quantity -= body.quantity
     position.total_invested -= cost_basis_krw
-    if position.quantity <= 0:
+    remaining = position.quantity
+    if remaining <= 0:
         await session.delete(position)
     else:
         position.updated_at = datetime.now()
@@ -434,6 +506,9 @@ async def execute_sell(
         source="manual",
     )
     session.add(trade)
+
+    # 수동 매도 후 잔량 부족한 pending 주문 자동 취소
+    await _cancel_excess_orders(session, body.account_id, body.ticker, remaining)
 
     await session.commit()
     return {
@@ -728,7 +803,9 @@ async def get_ad_reward_status(
     await _verify_account_owner(account_id, user, session)
 
     cooldown_sec = settings.ad_reward_cooldown_seconds
-    now = datetime.now()
+    _KST = timezone(timedelta(hours=9))
+    now_kst = datetime.now(_KST)
+    now = now_kst.astimezone(timezone.utc).replace(tzinfo=None)
 
     # 마지막 claimed 기록
     result = await session.execute(
@@ -762,8 +839,8 @@ async def get_ad_reward_status(
     )
     total_earned = total_result.scalar() or 0
 
-    # 오늘 보상 횟수
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    # 오늘 보상 횟수 (KST 기준 자정)
+    today_start = now_kst.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).replace(tzinfo=None)
     today_result = await session.execute(
         select(func.count(AdRewardLogModel.id)).where(
             AdRewardLogModel.user_id == user.id,
@@ -792,7 +869,7 @@ async def request_ad_reward(
     await _verify_account_owner(body.account_id, user, session)
 
     cooldown_sec = settings.ad_reward_cooldown_seconds
-    now = datetime.now()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
 
     # 쿨다운 체크
     result = await session.execute(
@@ -851,7 +928,7 @@ async def claim_ad_reward(
     session: AsyncSession = Depends(get_async_session),
 ):
     """광고 시청 후 보상 지급."""
-    now = datetime.now()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     token_expire_sec = settings.ad_reward_token_expire_seconds
     min_watch_sec = settings.ad_reward_min_watch_seconds
     cooldown_sec = settings.ad_reward_cooldown_seconds
@@ -927,6 +1004,228 @@ async def claim_ad_reward(
         "new_cash_balance": account.cash_balance,
         "new_bonus_balance": account.bonus_balance,
     }
+
+
+# --- Orders (지정가/손절/예약) ---
+
+@router.post("/orders")
+async def create_order(
+    body: CreateOrderIn,
+    user: UserModel = Depends(get_current_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """단일 주문 생성 (limit_sell / stop_loss / scheduled)."""
+    account = await _verify_account_owner(body.account_id, user, session)
+
+    # 포지션 확인
+    result = await session.execute(
+        select(PaperPositionModel).where(
+            PaperPositionModel.account_id == body.account_id,
+            PaperPositionModel.ticker == body.ticker,
+        )
+    )
+    position = result.scalar_one_or_none()
+    if position is None:
+        raise HTTPException(status_code=400, detail="보유하지 않은 종목입니다.")
+
+    # 기존 pending 주문 합산
+    pending_result = await session.execute(
+        select(func.coalesce(func.sum(PaperOrderModel.quantity), 0)).where(
+            PaperOrderModel.account_id == body.account_id,
+            PaperOrderModel.ticker == body.ticker,
+            PaperOrderModel.status == "pending",
+        )
+    )
+    pending_qty = pending_result.scalar() or 0
+
+    if pending_qty + body.quantity > position.quantity:
+        raise HTTPException(
+            status_code=400,
+            detail=f"주문 수량 초과: 보유 {position.quantity}주, 기존 주문 {pending_qty}주, 신규 {body.quantity}주",
+        )
+
+    # 타입별 필수 필드 검증
+    if body.order_type == "limit_sell":
+        if not body.target_price or body.target_price <= 0:
+            raise HTTPException(status_code=400, detail="지정가(target_price)를 입력하세요.")
+    elif body.order_type == "stop_loss":
+        if not body.stop_price or body.stop_price <= 0:
+            raise HTTPException(status_code=400, detail="손절가(stop_price)를 입력하세요.")
+    elif body.order_type == "scheduled":
+        if not body.scheduled_at:
+            raise HTTPException(status_code=400, detail="예약 시간(scheduled_at)을 입력하세요.")
+    else:
+        raise HTTPException(status_code=400, detail="유효하지 않은 주문 유형입니다.")
+
+    scheduled_dt = None
+    if body.scheduled_at:
+        try:
+            scheduled_dt = datetime.fromisoformat(body.scheduled_at.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="예약 시간 형식이 올바르지 않습니다.")
+
+    order = PaperOrderModel(
+        account_id=body.account_id,
+        user_id=user.id,
+        ticker=body.ticker,
+        name=position.name,
+        market=position.market,
+        quantity=body.quantity,
+        order_type=body.order_type,
+        target_price=body.target_price,
+        stop_price=body.stop_price,
+        scheduled_at=scheduled_dt,
+        status="pending",
+    )
+    session.add(order)
+    await session.commit()
+    await session.refresh(order)
+
+    return _serialize_order(order)
+
+
+@router.post("/orders/oco")
+async def create_oco_order(
+    body: CreateOCOOrderIn,
+    user: UserModel = Depends(get_current_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """OCO 주문 (지정가 + 손절 동시 생성)."""
+    account = await _verify_account_owner(body.account_id, user, session)
+
+    # 포지션 확인
+    result = await session.execute(
+        select(PaperPositionModel).where(
+            PaperPositionModel.account_id == body.account_id,
+            PaperPositionModel.ticker == body.ticker,
+        )
+    )
+    position = result.scalar_one_or_none()
+    if position is None:
+        raise HTTPException(status_code=400, detail="보유하지 않은 종목입니다.")
+
+    # 기존 pending 주문 합산 — OCO는 같은 수량으로 2건 생성하지만 실제 체결은 1건
+    pending_result = await session.execute(
+        select(func.coalesce(func.sum(PaperOrderModel.quantity), 0)).where(
+            PaperOrderModel.account_id == body.account_id,
+            PaperOrderModel.ticker == body.ticker,
+            PaperOrderModel.status == "pending",
+        )
+    )
+    pending_qty = pending_result.scalar() or 0
+
+    if pending_qty + body.quantity > position.quantity:
+        raise HTTPException(
+            status_code=400,
+            detail=f"주문 수량 초과: 보유 {position.quantity}주, 기존 주문 {pending_qty}주, 신규 {body.quantity}주",
+        )
+
+    if body.target_price <= 0 or body.stop_price <= 0:
+        raise HTTPException(status_code=400, detail="지정가와 손절가를 모두 입력하세요.")
+    if body.target_price <= body.stop_price:
+        raise HTTPException(status_code=400, detail="지정가는 손절가보다 높아야 합니다.")
+
+    oco_group = str(uuid.uuid4())[:8]
+
+    limit_order = PaperOrderModel(
+        account_id=body.account_id,
+        user_id=user.id,
+        ticker=body.ticker,
+        name=position.name,
+        market=position.market,
+        quantity=body.quantity,
+        order_type="limit_sell",
+        target_price=body.target_price,
+        oco_group_id=oco_group,
+        status="pending",
+    )
+    stop_order = PaperOrderModel(
+        account_id=body.account_id,
+        user_id=user.id,
+        ticker=body.ticker,
+        name=position.name,
+        market=position.market,
+        quantity=body.quantity,
+        order_type="stop_loss",
+        stop_price=body.stop_price,
+        oco_group_id=oco_group,
+        status="pending",
+    )
+    session.add(limit_order)
+    session.add(stop_order)
+    await session.commit()
+    await session.refresh(limit_order)
+    await session.refresh(stop_order)
+
+    return {
+        "oco_group_id": oco_group,
+        "orders": [_serialize_order(limit_order), _serialize_order(stop_order)],
+    }
+
+
+@router.get("/orders/{account_id}")
+async def list_orders(
+    account_id: int,
+    status: str | None = Query(None),
+    ticker: str | None = Query(None),
+    user: UserModel = Depends(get_current_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """주문 목록 조회."""
+    await _verify_account_owner(account_id, user, session)
+
+    query = select(PaperOrderModel).where(PaperOrderModel.account_id == account_id)
+    if status:
+        query = query.where(PaperOrderModel.status == status)
+    if ticker:
+        query = query.where(PaperOrderModel.ticker == ticker)
+
+    query = query.order_by(PaperOrderModel.created_at.desc())
+
+    result = await session.execute(query)
+    orders = result.scalars().all()
+    return [_serialize_order(o) for o in orders]
+
+
+@router.delete("/orders/{order_id}")
+async def cancel_order(
+    order_id: int,
+    user: UserModel = Depends(get_current_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """주문 취소."""
+    result = await session.execute(
+        select(PaperOrderModel).where(
+            PaperOrderModel.id == order_id,
+            PaperOrderModel.user_id == user.id,
+        )
+    )
+    order = result.scalar_one_or_none()
+    if order is None:
+        raise HTTPException(status_code=404, detail="주문을 찾을 수 없습니다.")
+    if order.status != "pending":
+        raise HTTPException(status_code=400, detail="대기 중인 주문만 취소할 수 있습니다.")
+
+    order.status = "cancelled"
+    order.cancel_reason = "user_cancelled"
+    order.updated_at = datetime.now()
+
+    # OCO 그룹 내 나머지 주문도 함께 취소
+    if order.oco_group_id:
+        oco_result = await session.execute(
+            select(PaperOrderModel).where(
+                PaperOrderModel.oco_group_id == order.oco_group_id,
+                PaperOrderModel.status == "pending",
+                PaperOrderModel.id != order_id,
+            )
+        )
+        for sibling in oco_result.scalars().all():
+            sibling.status = "cancelled"
+            sibling.cancel_reason = "oco_cancelled"
+            sibling.updated_at = datetime.now()
+
+    await session.commit()
+    return {"ok": True}
 
 
 # --- Deposit (추가 입금) ---

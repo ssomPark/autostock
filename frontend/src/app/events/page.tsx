@@ -51,8 +51,7 @@ function getFirstDayOfWeek(year: number, month: number) {
 }
 
 function formatDate(iso: string) {
-  const d = new Date(iso);
-  return `${d.getMonth() + 1}/${d.getDate()}`;
+  return new Date(iso).toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul", month: "numeric", day: "numeric" });
 }
 
 function daysUntilText(days: number | null) {
@@ -514,6 +513,7 @@ function EventDetailPanel({ event, onClose, onRefresh, isAdmin, onEdit }: {
             </div>
             <p className="text-sm text-[var(--muted)]">
               {new Date(event.event_date).toLocaleDateString("ko-KR", {
+                timeZone: "Asia/Seoul",
                 year: "numeric",
                 month: "long",
                 day: "numeric",

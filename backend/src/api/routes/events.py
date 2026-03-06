@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select, and_
@@ -24,9 +24,10 @@ router = APIRouter()
 
 def _event_to_response(event: MarketEventModel) -> dict:
     """Convert DB model to response dict."""
-    now = datetime.now()
+    _KST = timezone(timedelta(hours=9))
+    now_kst = datetime.now(_KST).replace(tzinfo=None)
     event_date = event.event_date
-    days_until = (event_date.replace(tzinfo=None) - now.replace(tzinfo=None)).days if event_date else None
+    days_until = (event_date.replace(tzinfo=None) - now_kst).days if event_date else None
 
     stocks = []
     if event.stocks:
@@ -107,12 +108,15 @@ async def list_events(
         conditions.append(MarketEventModel.event_date >= start)
         conditions.append(MarketEventModel.event_date <= end)
     elif upcoming_days:
-        now = datetime.now()
+        _KST = timezone(timedelta(hours=9))
+        now = datetime.now(_KST).replace(tzinfo=None)
         if not include_past:
             conditions.append(MarketEventModel.event_date >= now - timedelta(days=1))
         conditions.append(MarketEventModel.event_date <= now + timedelta(days=upcoming_days))
     elif not include_past:
-        conditions.append(MarketEventModel.event_date >= datetime.now() - timedelta(days=1))
+        _KST = timezone(timedelta(hours=9))
+        now = datetime.now(_KST).replace(tzinfo=None)
+        conditions.append(MarketEventModel.event_date >= now - timedelta(days=1))
 
     if category:
         conditions.append(MarketEventModel.category == category)

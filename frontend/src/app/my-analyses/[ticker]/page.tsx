@@ -273,7 +273,7 @@ export default function AnalysisHistoryPage() {
               const actionColor = item.signal === "BUY" ? "#4ade80" : item.signal === "SELL" ? "#f87171" : "#facc15";
               const actionLabel = item.signal === "BUY" ? "매수" : item.signal === "SELL" ? "매도" : "관망";
               const date = item.analyzed_at
-                ? new Date(item.analyzed_at).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })
+                ? new Date(item.analyzed_at).toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })
                 : "";
               const isExpanded = expandedId === item.id;
               const prevItem = index < history.length - 1 ? history[index + 1] : null;

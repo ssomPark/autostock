@@ -629,7 +629,7 @@ export default function MyAnalysesPage() {
             const actionBg = item.signal === "BUY" ? "rgba(34,197,94,0.2)" : item.signal === "SELL" ? "rgba(239,68,68,0.2)" : "rgba(234,179,8,0.2)";
             const actionLabel = item.signal === "BUY" ? "매수" : item.signal === "SELL" ? "매도" : "관망";
             const sc = item.score_data || {};
-            const date = item.analyzed_at ? new Date(item.analyzed_at).toLocaleDateString("ko-KR", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
+            const date = item.analyzed_at ? new Date(item.analyzed_at).toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "";
             const isExpanded = expandedId === item.id;
             const isSelected = selectedIds.has(item.id);
             const perf = perfMap.get(item.id);

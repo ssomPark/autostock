@@ -2,12 +2,12 @@
 
 import json
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func, select, and_, extract
+from sqlalchemy import Date, cast, func, select, and_, extract
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -16,18 +16,23 @@ from src.config.settings import settings
 from src.db.database import get_async_session
 from src.models.db_models import (
     AdRewardLogModel,
+    DailyMetricSnapshotModel,
     EventStockModel,
     MarketEventModel,
     PaperAccountModel,
     PaperTradeModel,
     PipelineRunModel,
+    PortfolioModel,
     SavedAnalysisModel,
     SiteSettingModel,
+    UpdatePostModel,
     UserModel,
     WatchlistItemModel,
 )
 
 logger = logging.getLogger(__name__)
+
+_KST_OFFSET = timezone(timedelta(hours=9))
 
 router = APIRouter()
 
@@ -38,8 +43,10 @@ async def dashboard(
     session: AsyncSession = Depends(get_async_session),
 ):
     """Admin dashboard summary cards."""
-    now = datetime.now()
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    now_kst = datetime.now(_KST_OFFSET)
+    # KST midnight → naive UTC for DB comparison
+    today_start = now_kst.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).replace(tzinfo=None)
+    now = now_kst.astimezone(timezone.utc).replace(tzinfo=None)
 
     total_users = (await session.execute(func.count(UserModel.id))).scalar() or 0
     new_users_today = (
@@ -104,6 +111,25 @@ async def dashboard(
         await session.execute(select(func.count(func.distinct(WatchlistItemModel.user_id))))
     ).scalar() or 0
 
+    # Realtime visitor data from Redis
+    visitors = {"today_total": 0, "today_anon": 0, "today_logged_in": 0, "page_views": 0}
+    try:
+        from src.utils.redis_cache import _get_redis
+        r = await _get_redis()
+        today_str = now_kst.strftime("%Y-%m-%d")
+        today_total = await r.scard(f"visitors:{today_str}:all") or 0
+        today_anon = await r.scard(f"visitors:{today_str}:anon") or 0
+        today_logged_in = await r.scard(f"visitors:{today_str}:users") or 0
+        pv = int(await r.get(f"visitors:{today_str}:pv") or 0)
+        visitors = {
+            "today_total": today_total,
+            "today_anon": today_anon,
+            "today_logged_in": today_logged_in,
+            "page_views": pv,
+        }
+    except Exception as e:
+        logger.debug(f"Redis visitor read failed: {e}")
+
     return {
         "users": {"total": total_users, "today": new_users_today},
         "trades": {"total": total_trades, "today": trades_today},
@@ -112,6 +138,7 @@ async def dashboard(
         "watchlist": {"total_items": watchlist_total, "unique_users": watchlist_unique_users},
         "events": {"active": active_events},
         "pipeline": {"runs_this_week": pipeline_runs_week},
+        "visitors": visitors,
     }
 
 
@@ -341,8 +368,8 @@ async def ad_reward_stats(
     session: AsyncSession = Depends(get_async_session),
 ):
     """Ad reward aggregate statistics."""
-    now = datetime.now()
-    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    now_kst = datetime.now(_KST_OFFSET)
+    today_start = now_kst.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).replace(tzinfo=None)
 
     total_claimed = (
         await session.execute(
@@ -766,3 +793,591 @@ async def update_navigation_order(
         session.add(SiteSettingModel(key="nav_order", value=json.dumps(body.order)))
     await session.commit()
     return {"ok": True, "order": body.order}
+
+
+# ─── Metrics (핵심 지표) ──────────────────────────────────────
+
+
+async def _collect_daily_snapshot(session: AsyncSession) -> dict:
+    """오늘 날짜의 일일 지표 스냅샷을 수집하여 DB에 UPSERT."""
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    now_kst = datetime.now(_KST_OFFSET)
+    today_start = now_kst.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).replace(tzinfo=None)
+    tomorrow_start = today_start + timedelta(days=1)
+
+    # Total users
+    total_users = (
+        await session.execute(select(func.count(UserModel.id)))
+    ).scalar() or 0
+
+    # New users today
+    new_users = (
+        await session.execute(
+            select(func.count(UserModel.id)).where(
+                UserModel.created_at >= today_start,
+                UserModel.created_at < tomorrow_start,
+            )
+        )
+    ).scalar() or 0
+
+    # Active users (DAU): logged in OR saved analysis OR traded today
+    login_users = select(UserModel.id).where(
+        UserModel.last_login_at >= today_start,
+        UserModel.last_login_at < tomorrow_start,
+    )
+    analysis_users = select(SavedAnalysisModel.user_id).where(
+        SavedAnalysisModel.created_at >= today_start,
+        SavedAnalysisModel.created_at < tomorrow_start,
+    )
+    trade_users = (
+        select(PaperAccountModel.user_id)
+        .join(PaperTradeModel, PaperTradeModel.account_id == PaperAccountModel.id)
+        .where(
+            PaperTradeModel.executed_at >= today_start,
+            PaperTradeModel.executed_at < tomorrow_start,
+        )
+    )
+    union_q = login_users.union(analysis_users, trade_users).subquery()
+    active_users = (
+        await session.execute(select(func.count()).select_from(union_q))
+    ).scalar() or 0
+
+    # Analysis count today
+    analysis_count = (
+        await session.execute(
+            select(func.count(SavedAnalysisModel.id)).where(
+                SavedAnalysisModel.created_at >= today_start,
+                SavedAnalysisModel.created_at < tomorrow_start,
+            )
+        )
+    ).scalar() or 0
+
+    # Trade count today
+    trade_count = (
+        await session.execute(
+            select(func.count(PaperTradeModel.id)).where(
+                PaperTradeModel.executed_at >= today_start,
+                PaperTradeModel.executed_at < tomorrow_start,
+            )
+        )
+    ).scalar() or 0
+
+    # Pin count today
+    pin_count = (
+        await session.execute(
+            select(func.count(SavedAnalysisModel.id)).where(
+                SavedAnalysisModel.is_pinned == True,
+                SavedAnalysisModel.created_at >= today_start,
+                SavedAnalysisModel.created_at < tomorrow_start,
+            )
+        )
+    ).scalar() or 0
+
+    # Portfolio count
+    portfolio_count = (
+        await session.execute(select(func.count(PortfolioModel.id)))
+    ).scalar() or 0
+
+    # Anonymous IPs + Visitor tracking from Redis
+    anonymous_ips = 0
+    page_views = 0
+    unique_visitors = 0
+    unique_visitors_anon = 0
+    try:
+        from src.utils.redis_cache import _get_redis
+        r = await _get_redis()
+        today_str = now_kst.strftime("%Y-%m-%d")
+
+        # Legacy analysis_limit IP scan
+        cursor, keys = 0, []
+        while True:
+            cursor, batch = await r.scan(cursor, match=f"analysis_limit:*:{today_str}", count=200)
+            keys.extend(batch)
+            if cursor == 0:
+                break
+        ips = set()
+        for k in keys:
+            parts = k.split(":")
+            if len(parts) >= 3:
+                ips.add(parts[1])
+        anonymous_ips = len(ips)
+
+        # Visitor tracking data
+        page_views = int(await r.get(f"visitors:{today_str}:pv") or 0)
+        unique_visitors = await r.scard(f"visitors:{today_str}:all") or 0
+        unique_visitors_anon = await r.scard(f"visitors:{today_str}:anon") or 0
+    except Exception as e:
+        logger.debug(f"Redis visitor/anonymous read failed: {e}")
+
+    # Pipeline runs today
+    pipeline_runs = (
+        await session.execute(
+            select(func.count(PipelineRunModel.id)).where(
+                PipelineRunModel.started_at >= today_start,
+                PipelineRunModel.started_at < tomorrow_start,
+            )
+        )
+    ).scalar() or 0
+
+    snapshot_data = {
+        "date": today_start,
+        "total_users": total_users,
+        "new_users": new_users,
+        "active_users": active_users,
+        "analysis_count": analysis_count,
+        "trade_count": trade_count,
+        "pin_count": pin_count,
+        "portfolio_count": portfolio_count,
+        "anonymous_ips": anonymous_ips,
+        "pipeline_runs": pipeline_runs,
+        "page_views": page_views,
+        "unique_visitors": unique_visitors,
+        "unique_visitors_anon": unique_visitors_anon,
+    }
+
+    # UPSERT
+    stmt = pg_insert(DailyMetricSnapshotModel).values(**snapshot_data)
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["date"],
+        set_={k: v for k, v in snapshot_data.items() if k != "date"},
+    )
+    await session.execute(stmt)
+    await session.commit()
+
+    return snapshot_data
+
+
+@router.post("/metrics/snapshot")
+async def trigger_snapshot(
+    _=Depends(get_admin_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """수동으로 오늘 스냅샷 수집."""
+    data = await _collect_daily_snapshot(session)
+    return {"ok": True, "snapshot": {k: str(v) if isinstance(v, datetime) else v for k, v in data.items()}}
+
+
+@router.get("/visitors/top-pages")
+async def visitors_top_pages(
+    _=Depends(get_admin_user),
+):
+    """오늘 인기 페이지 TOP 10 (Redis HASH에서 조회)."""
+    try:
+        from src.utils.redis_cache import _get_redis
+        r = await _get_redis()
+        now_kst = datetime.now(_KST_OFFSET)
+        today_str = now_kst.strftime("%Y-%m-%d")
+        paths = await r.hgetall(f"visitors:{today_str}:paths")
+        sorted_paths = sorted(paths.items(), key=lambda x: int(x[1]), reverse=True)[:10]
+        return {"pages": [{"path": p, "count": int(c)} for p, c in sorted_paths]}
+    except Exception as e:
+        logger.debug(f"Redis top-pages failed: {e}")
+        return {"pages": []}
+
+
+@router.get("/metrics")
+async def get_metrics(
+    _=Depends(get_admin_user),
+    session: AsyncSession = Depends(get_async_session),
+    period: int = Query(7, description="기간 (7/30/90일)"),
+):
+    """핵심 지표 조회."""
+    if period not in (7, 30, 90):
+        period = 7
+
+    now_kst = datetime.now(_KST_OFFSET)
+    today_start = now_kst.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc).replace(tzinfo=None)
+    tomorrow_start = today_start + timedelta(days=1)
+    period_start = today_start - timedelta(days=period)
+    prev_period_start = period_start - timedelta(days=period)
+
+    # ── Total users ──
+    total_users = (
+        await session.execute(select(func.count(UserModel.id)))
+    ).scalar() or 0
+
+    # ── New users in period ──
+    new_users = (
+        await session.execute(
+            select(func.count(UserModel.id)).where(UserModel.created_at >= period_start)
+        )
+    ).scalar() or 0
+
+    prev_new_users = (
+        await session.execute(
+            select(func.count(UserModel.id)).where(
+                UserModel.created_at >= prev_period_start,
+                UserModel.created_at < period_start,
+            )
+        )
+    ).scalar() or 0
+
+    growth_rate = ((new_users - prev_new_users) / prev_new_users * 100) if prev_new_users > 0 else 0.0
+
+    # ── DAU (today, realtime) ──
+    login_users = select(UserModel.id).where(
+        UserModel.last_login_at >= today_start,
+        UserModel.last_login_at < tomorrow_start,
+    )
+    analysis_users = select(SavedAnalysisModel.user_id).where(
+        SavedAnalysisModel.created_at >= today_start,
+        SavedAnalysisModel.created_at < tomorrow_start,
+    )
+    trade_users = (
+        select(PaperAccountModel.user_id)
+        .join(PaperTradeModel, PaperTradeModel.account_id == PaperAccountModel.id)
+        .where(
+            PaperTradeModel.executed_at >= today_start,
+            PaperTradeModel.executed_at < tomorrow_start,
+        )
+    )
+    union_q = login_users.union(analysis_users, trade_users).subquery()
+    dau = (
+        await session.execute(select(func.count()).select_from(union_q))
+    ).scalar() or 0
+
+    # ── MAU (30-day active) ──
+    mau_start = today_start - timedelta(days=30)
+    login_mau = select(UserModel.id).where(UserModel.last_login_at >= mau_start)
+    analysis_mau = select(SavedAnalysisModel.user_id).where(SavedAnalysisModel.created_at >= mau_start)
+    trade_mau = (
+        select(PaperAccountModel.user_id)
+        .join(PaperTradeModel, PaperTradeModel.account_id == PaperAccountModel.id)
+        .where(PaperTradeModel.executed_at >= mau_start)
+    )
+    mau_union = login_mau.union(analysis_mau, trade_mau).subquery()
+    mau = (
+        await session.execute(select(func.count()).select_from(mau_union))
+    ).scalar() or 0
+
+    # ── Active users in period ──
+    login_period = select(UserModel.id).where(UserModel.last_login_at >= period_start)
+    analysis_period = select(SavedAnalysisModel.user_id).where(SavedAnalysisModel.created_at >= period_start)
+    trade_period = (
+        select(PaperAccountModel.user_id)
+        .join(PaperTradeModel, PaperTradeModel.account_id == PaperAccountModel.id)
+        .where(PaperTradeModel.executed_at >= period_start)
+    )
+    active_union = login_period.union(analysis_period, trade_period).subquery()
+    active_users = (
+        await session.execute(select(func.count()).select_from(active_union))
+    ).scalar() or 0
+
+    # ── Retention ──
+    login_prev = select(UserModel.id).where(
+        UserModel.last_login_at >= prev_period_start,
+        UserModel.last_login_at < period_start,
+    )
+    analysis_prev = select(SavedAnalysisModel.user_id).where(
+        SavedAnalysisModel.created_at >= prev_period_start,
+        SavedAnalysisModel.created_at < period_start,
+    )
+    trade_prev = (
+        select(PaperAccountModel.user_id)
+        .join(PaperTradeModel, PaperTradeModel.account_id == PaperAccountModel.id)
+        .where(
+            PaperTradeModel.executed_at >= prev_period_start,
+            PaperTradeModel.executed_at < period_start,
+        )
+    )
+    prev_active_union = login_prev.union(analysis_prev, trade_prev).subquery()
+
+    # Intersection: users active in BOTH periods
+    curr_active_sub = login_period.union(analysis_period, trade_period).subquery()
+    retained = (
+        await session.execute(
+            select(func.count()).select_from(
+                select(prev_active_union.c[prev_active_union.c.keys()[0]])
+                .where(prev_active_union.c[prev_active_union.c.keys()[0]].in_(
+                    select(curr_active_sub.c[curr_active_sub.c.keys()[0]])
+                ))
+                .subquery()
+            )
+        )
+    ).scalar() or 0
+    prev_active_count = (
+        await session.execute(select(func.count()).select_from(prev_active_union))
+    ).scalar() or 0
+    retention_rate = (retained / prev_active_count * 100) if prev_active_count > 0 else 0.0
+
+    # ── Feature usage ──
+    analyses_count = (
+        await session.execute(
+            select(func.count(SavedAnalysisModel.id)).where(SavedAnalysisModel.created_at >= period_start)
+        )
+    ).scalar() or 0
+    trades_count = (
+        await session.execute(
+            select(func.count(PaperTradeModel.id)).where(PaperTradeModel.executed_at >= period_start)
+        )
+    ).scalar() or 0
+    pins_count = (
+        await session.execute(
+            select(func.count(SavedAnalysisModel.id)).where(
+                SavedAnalysisModel.is_pinned == True,
+                SavedAnalysisModel.created_at >= period_start,
+            )
+        )
+    ).scalar() or 0
+
+    # ── Engagement ──
+    avg_analyses = (analyses_count / active_users) if active_users > 0 else 0.0
+    avg_trades = (trades_count / active_users) if active_users > 0 else 0.0
+
+    # ── Segmentation ──
+    inactive = total_users - active_users
+
+    # ── Daily trend: compute from raw tables + supplement with snapshots ──
+    # Generate date range for the period
+    date_range = []
+    cursor_date = period_start
+    while cursor_date <= today_start:
+        date_range.append(cursor_date)
+        cursor_date += timedelta(days=1)
+
+    # New users per day (from raw table)
+    new_users_rows = (
+        await session.execute(
+            select(
+                cast(UserModel.created_at, Date).label("day"),
+                func.count(UserModel.id),
+            )
+            .where(UserModel.created_at >= period_start, UserModel.created_at < tomorrow_start)
+            .group_by(cast(UserModel.created_at, Date))
+        )
+    ).all()
+    new_users_map = {row[0]: row[1] for row in new_users_rows}
+
+    # Analyses per day (from raw table)
+    analysis_rows = (
+        await session.execute(
+            select(
+                cast(SavedAnalysisModel.created_at, Date).label("day"),
+                func.count(SavedAnalysisModel.id),
+            )
+            .where(SavedAnalysisModel.created_at >= period_start, SavedAnalysisModel.created_at < tomorrow_start)
+            .group_by(cast(SavedAnalysisModel.created_at, Date))
+        )
+    ).all()
+    analysis_map = {row[0]: row[1] for row in analysis_rows}
+
+    # Trades per day (from raw table)
+    trades_rows = (
+        await session.execute(
+            select(
+                cast(PaperTradeModel.executed_at, Date).label("day"),
+                func.count(PaperTradeModel.id),
+            )
+            .where(PaperTradeModel.executed_at >= period_start, PaperTradeModel.executed_at < tomorrow_start)
+            .group_by(cast(PaperTradeModel.executed_at, Date))
+        )
+    ).all()
+    trades_map = {row[0]: row[1] for row in trades_rows}
+
+    # Pipeline runs per day (from raw table)
+    pipeline_rows = (
+        await session.execute(
+            select(
+                cast(PipelineRunModel.started_at, Date).label("day"),
+                func.count(PipelineRunModel.id),
+            )
+            .where(PipelineRunModel.started_at >= period_start, PipelineRunModel.started_at < tomorrow_start)
+            .group_by(cast(PipelineRunModel.started_at, Date))
+        )
+    ).all()
+    pipeline_map = {row[0]: row[1] for row in pipeline_rows}
+
+    # Snapshots for active_users / pin_count / anonymous_ips (only available from snapshots)
+    snapshots_result = await session.execute(
+        select(DailyMetricSnapshotModel)
+        .where(DailyMetricSnapshotModel.date >= period_start)
+        .order_by(DailyMetricSnapshotModel.date.asc())
+    )
+    snapshots = snapshots_result.scalars().all()
+    snapshot_map = {}
+    for snap in snapshots:
+        snap_date = snap.date.date() if isinstance(snap.date, datetime) else snap.date
+        snapshot_map[snap_date] = snap
+
+    # Build daily array
+    daily = []
+    for d in date_range:
+        day_date = d.date() if isinstance(d, datetime) else d
+        snap = snapshot_map.get(day_date)
+        daily.append({
+            "date": d.strftime("%m-%d"),
+            "active_users": snap.active_users if snap else 0,
+            "new_users": new_users_map.get(day_date, 0),
+            "analysis_count": analysis_map.get(day_date, 0),
+            "trade_count": trades_map.get(day_date, 0),
+            "pin_count": snap.pin_count if snap else 0,
+            "anonymous_ips": snap.anonymous_ips if snap else 0,
+            "pipeline_runs": pipeline_map.get(day_date, 0),
+            "page_views": getattr(snap, "page_views", 0) or 0,
+            "unique_visitors": getattr(snap, "unique_visitors", 0) or 0,
+            "unique_visitors_anon": getattr(snap, "unique_visitors_anon", 0) or 0,
+        })
+
+    # Compute avg visitors from snapshots
+    visitor_values = [getattr(s, "unique_visitors", 0) or 0 for s in snapshots if (getattr(s, "unique_visitors", 0) or 0) > 0]
+    avg_visitors = round(sum(visitor_values) / len(visitor_values), 1) if visitor_values else 0
+    total_page_views = sum(getattr(s, "page_views", 0) or 0 for s in snapshots)
+
+    return {
+        "period": period,
+        "summary": {
+            "total_users": total_users,
+            "new_users": new_users,
+            "active_users": active_users,
+            "dau": dau,
+            "mau": mau,
+            "growth_rate": round(growth_rate, 1),
+            "retention_rate": round(retention_rate, 1),
+            "avg_visitors": avg_visitors,
+            "total_page_views": total_page_views,
+        },
+        "feature_usage": {
+            "analyses": analyses_count,
+            "trades": trades_count,
+            "pins": pins_count,
+        },
+        "engagement": {
+            "avg_analyses_per_user": round(avg_analyses, 2),
+            "avg_trades_per_user": round(avg_trades, 2),
+        },
+        "segmentation": {
+            "registered": total_users,
+            "active_logged_in": active_users,
+            "inactive": inactive,
+        },
+        "daily": daily,
+    }
+
+
+# ─── Update Posts (업데이트 게시판) ──────────────────────────
+
+VALID_UPDATE_CATEGORIES = {"feature", "bugfix", "announcement", "maintenance"}
+
+
+class UpdatePostBody(BaseModel):
+    title: str
+    content: str
+    category: str = "announcement"
+    is_published: bool = True
+
+
+@router.get("/updates")
+async def list_updates_admin(
+    _=Depends(get_admin_user),
+    session: AsyncSession = Depends(get_async_session),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+):
+    """관리자용 업데이트 목록 (전체)."""
+    count_total = (await session.execute(select(func.count(UpdatePostModel.id)))).scalar() or 0
+    result = await session.execute(
+        select(UpdatePostModel)
+        .order_by(UpdatePostModel.created_at.desc())
+        .offset((page - 1) * size)
+        .limit(size)
+    )
+    posts = result.scalars().all()
+
+    return {
+        "posts": [
+            {
+                "id": p.id,
+                "title": p.title,
+                "content": p.content,
+                "category": p.category,
+                "is_published": p.is_published,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+                "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+            }
+            for p in posts
+        ],
+        "total": count_total,
+        "page": page,
+        "size": size,
+    }
+
+
+@router.post("/updates")
+async def create_update(
+    body: UpdatePostBody,
+    _=Depends(get_admin_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """업데이트 게시글 생성."""
+    category = body.category if body.category in VALID_UPDATE_CATEGORIES else "announcement"
+    post = UpdatePostModel(
+        title=body.title,
+        content=body.content,
+        category=category,
+        is_published=body.is_published,
+    )
+    session.add(post)
+    await session.commit()
+    await session.refresh(post)
+
+    return {
+        "id": post.id,
+        "title": post.title,
+        "content": post.content,
+        "category": post.category,
+        "is_published": post.is_published,
+        "created_at": post.created_at.isoformat() if post.created_at else None,
+    }
+
+
+@router.put("/updates/{post_id}")
+async def update_update(
+    post_id: int,
+    body: UpdatePostBody,
+    _=Depends(get_admin_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """업데이트 게시글 수정."""
+    result = await session.execute(
+        select(UpdatePostModel).where(UpdatePostModel.id == post_id)
+    )
+    post = result.scalar_one_or_none()
+    if not post:
+        raise HTTPException(status_code=404, detail="Update post not found")
+
+    post.title = body.title
+    post.content = body.content
+    post.category = body.category if body.category in VALID_UPDATE_CATEGORIES else post.category
+    post.is_published = body.is_published
+    post.updated_at = datetime.now()
+    await session.commit()
+
+    return {
+        "id": post.id,
+        "title": post.title,
+        "content": post.content,
+        "category": post.category,
+        "is_published": post.is_published,
+        "created_at": post.created_at.isoformat() if post.created_at else None,
+        "updated_at": post.updated_at.isoformat() if post.updated_at else None,
+    }
+
+
+@router.delete("/updates/{post_id}")
+async def delete_update(
+    post_id: int,
+    _=Depends(get_admin_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """업데이트 게시글 삭제."""
+    result = await session.execute(
+        select(UpdatePostModel).where(UpdatePostModel.id == post_id)
+    )
+    post = result.scalar_one_or_none()
+    if not post:
+        raise HTTPException(status_code=404, detail="Update post not found")
+
+    await session.delete(post)
+    await session.commit()
+    return {"ok": True}

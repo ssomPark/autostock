@@ -1,6 +1,7 @@
 export function DashboardHeader() {
   const now = new Date();
   const timeStr = now.toLocaleString("ko-KR", {
+    timeZone: "Asia/Seoul",
     year: "numeric",
     month: "long",
     day: "numeric",

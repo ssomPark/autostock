@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -415,7 +415,7 @@ async def save_analysis(
     )
     existing = result.scalar_one_or_none()
 
-    now = datetime.now()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     should_create_new = True
 
     if existing:

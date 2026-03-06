@@ -418,7 +418,7 @@ export default function PortfolioPage() {
         ticker: selectedStock.ticker,
         name: selectedStock.name,
         market: selectedStock.market,
-        quantity: parseInt(quantity),
+        quantity: parseFloat(quantity),
         avg_buy_price: parseFloat(avgPrice),
         currency,
       });
@@ -688,7 +688,8 @@ export default function PortfolioPage() {
                 value={quantity}
                 onChange={(e) => setQuantity(e.target.value)}
                 placeholder="수량"
-                min="1"
+                min="0.01"
+                step="any"
                 className="bg-[var(--surface-hover)] border border-[var(--card-border)] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
               {/* Avg Price */}

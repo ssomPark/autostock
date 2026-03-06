@@ -20,8 +20,12 @@ import {
   fetchMarketStatus,
   searchStocks,
   depositPaperAccount,
+  createPaperOrder,
+  createPaperOCOOrder,
+  fetchPaperOrders,
+  cancelPaperOrder,
 } from "@/lib/api";
-import type { LeaderboardEntry, LeaderboardResponse, StockSearchResult } from "@/lib/api";
+import type { LeaderboardEntry, LeaderboardResponse, StockSearchResult, PaperOrder } from "@/lib/api";
 import { useQuery } from "@tanstack/react-query";
 import { OrderModal } from "@/components/paper-trading/order-modal";
 import { DonutChart, AssetTrendChart, PnlBarChart, MarketPieChart } from "@/components/paper-trading/portfolio-charts";
@@ -113,7 +117,7 @@ function PnlText({ value, pct }: { value: number; pct?: number }) {
   );
 }
 
-// --- Sell Modal ---
+// --- Sell Modal (탭: 즉시 매도 / 지정가·손절 / 예약 매도) ---
 function SellModal({
   position,
   accountId,
@@ -125,18 +129,26 @@ function SellModal({
   onClose: () => void;
   onSuccess: () => void;
 }) {
+  const [tab, setTab] = useState<"instant" | "limit" | "scheduled">("instant");
   const [quantity, setQuantity] = useState(position.quantity);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sellRate, setSellRate] = useState<number | null>(position.exchange_rate ?? null);
 
+  // 지정가/손절 탭
+  const [targetPrice, setTargetPrice] = useState<number>(Math.round(position.current_price * 1.05 * 100) / 100);
+  const [useStopLoss, setUseStopLoss] = useState(false);
+  const [stopPrice, setStopPrice] = useState<number>(Math.round(position.current_price * 0.95 * 100) / 100);
+
+  // 예약 매도 탭
+  const [scheduledDate, setScheduledDate] = useState("");
+  const [scheduledTime, setScheduledTime] = useState("09:00");
+
   const isUS = ["NYSE", "NASDAQ", "AMEX"].includes(position.market) || position.market.startsWith("Nasdaq");
 
   useEffect(() => {
     if (isUS) {
-      fetchExchangeRate()
-        .then((d) => setSellRate(d.rate))
-        .catch(() => {});
+      fetchExchangeRate().then((d) => setSellRate(d.rate)).catch(() => {});
     }
   }, [isUS]);
 
@@ -152,7 +164,10 @@ function SellModal({
   const pnl = totalRevenueKRW - costBasisKRW;
   const pnlPct = costBasisKRW > 0 ? (pnl / costBasisKRW) * 100 : 0;
 
-  const handleSell = async () => {
+  const targetPctDiff = position.current_price > 0 ? ((targetPrice - position.current_price) / position.current_price * 100) : 0;
+  const stopPctDiff = position.current_price > 0 ? ((stopPrice - position.current_price) / position.current_price * 100) : 0;
+
+  const handleInstantSell = async () => {
     if (quantity <= 0 || quantity > position.quantity) return;
     setLoading(true);
     setError(null);
@@ -172,102 +187,434 @@ function SellModal({
     }
   };
 
+  const handleLimitOrder = async () => {
+    if (quantity <= 0 || quantity > position.quantity) return;
+    setLoading(true);
+    setError(null);
+    try {
+      if (useStopLoss) {
+        await createPaperOCOOrder({
+          account_id: accountId,
+          ticker: position.ticker,
+          quantity,
+          target_price: targetPrice,
+          stop_price: stopPrice,
+        });
+      } else {
+        await createPaperOrder({
+          account_id: accountId,
+          ticker: position.ticker,
+          quantity,
+          order_type: "limit_sell",
+          target_price: targetPrice,
+        });
+      }
+      onSuccess();
+      onClose();
+    } catch (err: any) {
+      const msg = err?.message ?? "";
+      if (msg.includes("400")) setError("주문 생성에 실패했습니다. 수량이나 가격을 확인하세요.");
+      else setError("주문 생성에 실패했습니다.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleScheduledOrder = async () => {
+    if (quantity <= 0 || quantity > position.quantity) return;
+    if (!scheduledDate) { setError("날짜를 선택하세요."); return; }
+    setLoading(true);
+    setError(null);
+    try {
+      const dt = new Date(`${scheduledDate}T${scheduledTime}:00`);
+      await createPaperOrder({
+        account_id: accountId,
+        ticker: position.ticker,
+        quantity,
+        order_type: "scheduled",
+        scheduled_at: dt.toISOString(),
+      });
+      onSuccess();
+      onClose();
+    } catch (err: any) {
+      setError("예약 주문 생성에 실패했습니다.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const QuantityInput = () => (
+    <div>
+      <label className="block text-sm text-[var(--muted)] mb-1">매도 수량</label>
+      <div className="flex items-center gap-2">
+        <button onClick={() => setQuantity(Math.max(1, quantity - 1))} className="w-10 h-10 rounded-lg bg-[var(--surface-hover)] hover:bg-[var(--surface-active)] transition-colors flex items-center justify-center text-lg">-</button>
+        <input
+          type="number" min={1} max={position.quantity} value={quantity || ""}
+          onChange={(e) => { const v = e.target.value; if (v === "") { setQuantity(0); return; } setQuantity(Math.min(position.quantity, Math.max(0, parseInt(v) || 0))); }}
+          onFocus={(e) => e.target.select()} onBlur={() => { if (quantity < 1) setQuantity(1); }}
+          className="flex-1 h-10 rounded-lg bg-[var(--surface-hover)] border border-[var(--card-border)] px-3 text-center text-lg font-medium focus:outline-none focus:border-blue-500"
+        />
+        <button onClick={() => setQuantity(Math.min(position.quantity, quantity + 1))} className="w-10 h-10 rounded-lg bg-[var(--surface-hover)] hover:bg-[var(--surface-active)] transition-colors flex items-center justify-center text-lg">+</button>
+      </div>
+      <div className="flex gap-2 mt-2">
+        {[
+          { label: "25%", q: Math.max(1, Math.floor(position.quantity * 0.25)) },
+          { label: "50%", q: Math.max(1, Math.floor(position.quantity * 0.5)) },
+          { label: "75%", q: Math.max(1, Math.floor(position.quantity * 0.75)) },
+          { label: "전량", q: position.quantity },
+        ].map(({ label, q }) => (
+          <button key={label} onClick={() => setQuantity(q)}
+            className={`flex-1 py-1 rounded text-xs transition-colors ${quantity === q ? "bg-red-600 text-white" : "bg-[var(--surface-hover)] text-[var(--muted)] hover:bg-[var(--surface-active)]"}`}
+          >{label}</button>
+        ))}
+      </div>
+    </div>
+  );
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
       <div className="absolute inset-0 bg-[var(--overlay)]" onClick={onClose} />
-      <div className="relative bg-[var(--card)] border border-[var(--card-border)] rounded-xl p-6 w-full max-w-md mx-4 shadow-2xl">
+      <div className="relative bg-[var(--card)] border border-[var(--card-border)] rounded-xl p-6 w-full max-w-md mx-4 shadow-2xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-bold">모의 매도</h3>
           <button onClick={onClose} className="p-1 rounded hover:bg-[var(--surface-active)] transition-colors">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
           </button>
         </div>
-        <div className="space-y-4">
-          <div className="bg-[var(--surface-hover)] rounded-lg p-3">
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="font-medium">{position.name}</span>
-                <span className="text-[var(--muted)] text-sm ml-1">({position.ticker})</span>
-              </div>
-              {isUS && <span className="text-xs px-2 py-0.5 rounded bg-blue-600/20 text-blue-400">{position.market}</span>}
+
+        {/* 종목 정보 */}
+        <div className="bg-[var(--surface-hover)] rounded-lg p-3 mb-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="font-medium">{position.name}</span>
+              <span className="text-[var(--muted)] text-sm ml-1">({position.ticker})</span>
             </div>
-            <div className="grid grid-cols-2 gap-2 mt-2 text-sm">
-              <div><span className="text-[var(--muted)]">보유</span> <span className="font-medium">{position.quantity}주</span></div>
-              <div><span className="text-[var(--muted)]">평균매수가</span> <span className="font-medium">{formatPrice(position.avg_buy_price, position.market)}</span></div>
-              <div><span className="text-[var(--muted)]">현재가</span> <span className="font-medium">{formatPrice(position.current_price, position.market)}</span></div>
-              {isUS && sellRate && (
-                <div><span className="text-[var(--muted)]">환율</span> <span className="font-medium">₩{sellRate.toLocaleString()}</span></div>
-              )}
-            </div>
+            {isUS && <span className="text-xs px-2 py-0.5 rounded bg-blue-600/20 text-blue-400">{position.market}</span>}
           </div>
-          <div>
-            <label className="block text-sm text-[var(--muted)] mb-1">매도 수량</label>
-            <div className="flex items-center gap-2">
-              <button onClick={() => setQuantity(Math.max(1, quantity - 1))} className="w-10 h-10 rounded-lg bg-[var(--surface-hover)] hover:bg-[var(--surface-active)] transition-colors flex items-center justify-center text-lg">-</button>
-              <input
-                type="number"
-                min={1}
-                max={position.quantity}
-                value={quantity || ""}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  if (v === "") { setQuantity(0); return; }
-                  setQuantity(Math.min(position.quantity, Math.max(0, parseInt(v) || 0)));
-                }}
-                onFocus={(e) => e.target.select()}
-                onBlur={() => { if (quantity < 1) setQuantity(1); }}
-                className="flex-1 h-10 rounded-lg bg-[var(--surface-hover)] border border-[var(--card-border)] px-3 text-center text-lg font-medium focus:outline-none focus:border-blue-500"
-              />
-              <button onClick={() => setQuantity(Math.min(position.quantity, quantity + 1))} className="w-10 h-10 rounded-lg bg-[var(--surface-hover)] hover:bg-[var(--surface-active)] transition-colors flex items-center justify-center text-lg">+</button>
-            </div>
-            <div className="flex gap-2 mt-2">
-              {[
-                { label: "25%", q: Math.max(1, Math.floor(position.quantity * 0.25)) },
-                { label: "50%", q: Math.max(1, Math.floor(position.quantity * 0.5)) },
-                { label: "75%", q: Math.max(1, Math.floor(position.quantity * 0.75)) },
-                { label: "전량", q: position.quantity },
-              ].map(({ label, q }) => (
-                <button
-                  key={label}
-                  onClick={() => setQuantity(q)}
-                  className={`flex-1 py-1 rounded text-xs transition-colors ${quantity === q ? "bg-red-600 text-white" : "bg-[var(--surface-hover)] text-[var(--muted)] hover:bg-[var(--surface-active)]"}`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="bg-[var(--surface-hover)] rounded-lg p-3 space-y-1">
-            <div className="flex justify-between text-sm">
-              <span className="text-[var(--muted)]">매도 금액</span>
-              <span className="font-medium">{formatKRW(totalRevenueKRW)}원</span>
-            </div>
+          <div className="grid grid-cols-2 gap-2 mt-2 text-sm">
+            <div><span className="text-[var(--muted)]">보유</span> <span className="font-medium">{position.quantity}주</span></div>
+            <div><span className="text-[var(--muted)]">평균매수가</span> <span className="font-medium">{formatPrice(position.avg_buy_price, position.market)}</span></div>
+            <div><span className="text-[var(--muted)]">현재가</span> <span className="font-medium">{formatPrice(position.current_price, position.market)}</span></div>
             {isUS && sellRate && (
-              <div className="flex justify-between text-xs text-[var(--muted)]">
-                <span>USD</span>
-                <span>${(quantity * position.current_price).toLocaleString("en-US", { minimumFractionDigits: 2 })}</span>
-              </div>
+              <div><span className="text-[var(--muted)]">환율</span> <span className="font-medium">{sellRate.toLocaleString()}원</span></div>
             )}
-            <div className="flex justify-between text-sm">
-              <span className="text-[var(--muted)]">예상 손익</span>
-              <PnlText value={pnl} pct={pnlPct} />
-            </div>
           </div>
+        </div>
+
+        {/* 탭 */}
+        <div className="flex gap-1 mb-4 bg-[var(--surface-hover)] rounded-lg p-1">
+          {([
+            { key: "instant" as const, label: "즉시 매도" },
+            { key: "limit" as const, label: "지정가/손절" },
+            { key: "scheduled" as const, label: "예약 매도" },
+          ]).map(({ key, label }) => (
+            <button key={key} onClick={() => { setTab(key); setError(null); }}
+              className={`flex-1 py-2 rounded-md text-xs font-medium transition-colors ${tab === key ? "bg-[var(--card)] text-[var(--foreground)] shadow-sm" : "text-[var(--muted)] hover:text-[var(--foreground)]"}`}
+            >{label}</button>
+          ))}
+        </div>
+
+        <div className="space-y-4">
+          {/* 즉시 매도 */}
+          {tab === "instant" && (
+            <>
+              <QuantityInput />
+              <div className="bg-[var(--surface-hover)] rounded-lg p-3 space-y-1">
+                <div className="flex justify-between text-sm">
+                  <span className="text-[var(--muted)]">매도 금액</span>
+                  <span className="font-medium">{formatKRW(totalRevenueKRW)}원</span>
+                </div>
+                {isUS && sellRate && (
+                  <div className="flex justify-between text-xs text-[var(--muted)]">
+                    <span>USD</span>
+                    <span>${(quantity * position.current_price).toLocaleString("en-US", { minimumFractionDigits: 2 })}</span>
+                  </div>
+                )}
+                <div className="flex justify-between text-sm">
+                  <span className="text-[var(--muted)]">예상 손익</span>
+                  <PnlText value={pnl} pct={pnlPct} />
+                </div>
+              </div>
+              <button onClick={handleInstantSell} disabled={loading || (isUS && !sellRate)}
+                className="w-full py-3 rounded-lg bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium transition-colors"
+              >
+                {loading ? "매도 중..." : isUS && !sellRate ? "환율 조회 중..." : `${quantity}주 즉시 매도`}
+              </button>
+            </>
+          )}
+
+          {/* 지정가/손절 */}
+          {tab === "limit" && (
+            <>
+              <QuantityInput />
+              <div>
+                <label className="block text-sm text-[var(--muted)] mb-1">
+                  목표가 (이 가격 이상이면 매도)
+                  <span className="ml-2" style={{ color: targetPctDiff >= 0 ? "#4ade80" : "#f87171" }}>
+                    {targetPctDiff >= 0 ? "+" : ""}{targetPctDiff.toFixed(1)}%
+                  </span>
+                </label>
+                <input type="number" value={targetPrice || ""} step={isUS ? 0.01 : 1} min={0}
+                  onChange={(e) => setTargetPrice(parseFloat(e.target.value) || 0)}
+                  onFocus={(e) => e.target.select()}
+                  className="w-full h-10 rounded-lg bg-[var(--surface-hover)] border border-[var(--card-border)] px-3 text-sm focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <input type="checkbox" id="useStopLoss" checked={useStopLoss} onChange={(e) => setUseStopLoss(e.target.checked)}
+                  className="w-4 h-4 rounded border-[var(--card-border)] bg-[var(--surface-hover)]"
+                />
+                <label htmlFor="useStopLoss" className="text-sm">손절도 함께 설정 (OCO)</label>
+              </div>
+              {useStopLoss && (
+                <div>
+                  <label className="block text-sm text-[var(--muted)] mb-1">
+                    손절가 (이 가격 이하이면 매도)
+                    <span className="ml-2" style={{ color: stopPctDiff >= 0 ? "#4ade80" : "#f87171" }}>
+                      {stopPctDiff >= 0 ? "+" : ""}{stopPctDiff.toFixed(1)}%
+                    </span>
+                  </label>
+                  <input type="number" value={stopPrice || ""} step={isUS ? 0.01 : 1} min={0}
+                    onChange={(e) => setStopPrice(parseFloat(e.target.value) || 0)}
+                    onFocus={(e) => e.target.select()}
+                    className="w-full h-10 rounded-lg bg-[var(--surface-hover)] border border-[var(--card-border)] px-3 text-sm focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              )}
+              <div className="bg-[var(--surface-hover)] rounded-lg p-3 text-xs text-[var(--muted)] space-y-1">
+                <p>현재가 기준 목표가 도달 시 자동 매도됩니다.</p>
+                {useStopLoss && <p>OCO: 지정가 또는 손절가 중 하나가 체결되면 다른 하나는 자동 취소됩니다.</p>}
+                <p>스케줄러가 약 5분 간격으로 체크합니다.</p>
+              </div>
+              <button onClick={handleLimitOrder} disabled={loading || targetPrice <= 0}
+                className="w-full py-3 rounded-lg bg-amber-600 hover:bg-amber-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium transition-colors"
+              >
+                {loading ? "주문 중..." : useStopLoss ? "OCO 주문 등록" : "지정가 주문 등록"}
+              </button>
+            </>
+          )}
+
+          {/* 예약 매도 */}
+          {tab === "scheduled" && (
+            <>
+              <QuantityInput />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm text-[var(--muted)] mb-1">날짜</label>
+                  <input type="date" value={scheduledDate}
+                    min={new Date().toISOString().split("T")[0]}
+                    onChange={(e) => setScheduledDate(e.target.value)}
+                    className="w-full h-10 rounded-lg bg-[var(--surface-hover)] border border-[var(--card-border)] px-3 text-sm focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-[var(--muted)] mb-1">시간</label>
+                  <input type="time" value={scheduledTime}
+                    onChange={(e) => setScheduledTime(e.target.value)}
+                    className="w-full h-10 rounded-lg bg-[var(--surface-hover)] border border-[var(--card-border)] px-3 text-sm focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+              <div className="bg-[var(--surface-hover)] rounded-lg p-3 text-xs text-[var(--muted)] space-y-1">
+                <p>지정 시각에 시장가로 자동 매도됩니다.</p>
+                <p>스케줄러가 약 5분 간격으로 체크합니다.</p>
+              </div>
+              <button onClick={handleScheduledOrder} disabled={loading || !scheduledDate}
+                className="w-full py-3 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium transition-colors"
+              >
+                {loading ? "주문 중..." : "예약 매도 등록"}
+              </button>
+            </>
+          )}
+
           {error && (
             <div className="flex items-center gap-2 text-red-400 text-sm bg-red-400/10 rounded-lg px-3 py-2">
               <svg className="w-4 h-4 shrink-0" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
               {error}
             </div>
           )}
-          <button
-            onClick={handleSell}
-            disabled={loading || (isUS && !sellRate)}
-            className="w-full py-3 rounded-lg bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium transition-colors"
-          >
-            {loading ? "매도 중..." : isUS && !sellRate ? "환율 조회 중..." : `${quantity}주 매도 (${formatKRW(totalRevenueKRW)}원)`}
-          </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// --- Orders Panel ---
+const ORDER_TYPE_LABELS: Record<string, string> = {
+  limit_sell: "지정가",
+  stop_loss: "손절",
+  scheduled: "예약",
+};
+
+const ORDER_STATUS_LABELS: Record<string, { label: string; color: string }> = {
+  pending: { label: "대기중", color: "bg-amber-600/20 text-amber-400" },
+  executed: { label: "체결", color: "bg-green-600/20 text-green-400" },
+  cancelled: { label: "취소", color: "bg-gray-600/20 text-gray-400" },
+};
+
+function OrdersPanel({ accountId, onRefresh }: { accountId: number; onRefresh: () => void }) {
+  const [orders, setOrders] = useState<PaperOrder[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [statusFilter, setStatusFilter] = useState<"pending" | "all">("pending");
+  const [cancellingId, setCancellingId] = useState<number | null>(null);
+
+  const loadOrders = useCallback(async () => {
+    try {
+      const data = await fetchPaperOrders(accountId, statusFilter === "all" ? {} : { status: "pending" });
+      setOrders(data);
+    } catch {
+      // ignore
+    } finally {
+      setLoading(false);
+    }
+  }, [accountId, statusFilter]);
+
+  useEffect(() => {
+    loadOrders();
+    const interval = setInterval(loadOrders, 30_000); // 30초 자동 갱신
+    return () => clearInterval(interval);
+  }, [loadOrders]);
+
+  const handleCancel = async (orderId: number) => {
+    setCancellingId(orderId);
+    try {
+      await cancelPaperOrder(orderId);
+      await loadOrders();
+      onRefresh();
+    } catch {
+      // ignore
+    } finally {
+      setCancellingId(null);
+    }
+  };
+
+  const pendingCount = orders.filter((o) => o.status === "pending").length;
+
+  if (loading) {
+    return (
+      <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4">
+        <h3 className="font-medium mb-3">활성 주문</h3>
+        <div className="text-sm text-[var(--muted)]">로딩 중...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="flex items-center gap-3 mb-3">
+        <h2 className="text-lg font-bold">예약 주문</h2>
+        {pendingCount > 0 && (
+          <span className="text-xs px-2 py-0.5 rounded-full bg-amber-600/20 text-amber-400 font-medium">{pendingCount}건 대기</span>
+        )}
+        <div className="flex gap-1 ml-auto">
+          {(["pending", "all"] as const).map((v) => (
+            <button key={v} onClick={() => setStatusFilter(v)}
+              className={`px-3 py-1 rounded-lg text-xs font-medium transition-colors ${statusFilter === v ? "bg-blue-600 text-white" : "bg-[var(--surface-hover)] text-[var(--muted)] hover:bg-[var(--surface-active)]"}`}
+            >
+              {v === "pending" ? "대기중" : "전체"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {orders.length === 0 ? (
+        <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-6 text-center text-[var(--muted)] text-sm">
+          {statusFilter === "pending" ? "대기 중인 주문이 없습니다." : "주문 이력이 없습니다."}
+          <p className="mt-1 text-xs">매도 버튼의 지정가/손절/예약 탭에서 주문을 등록하세요.</p>
+        </div>
+      ) : (
+        <>
+          {/* Mobile cards */}
+          <div className="md:hidden space-y-2">
+            {orders.map((order) => {
+              const st = ORDER_STATUS_LABELS[order.status] ?? ORDER_STATUS_LABELS.pending;
+              return (
+                <div key={order.id} className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${st.color}`}>{st.label}</span>
+                      <span className="text-xs px-1.5 py-0.5 rounded bg-[var(--surface-active)] text-[var(--muted)]">{ORDER_TYPE_LABELS[order.order_type] ?? order.order_type}</span>
+                      {order.oco_group_id && <span className="text-[10px] text-purple-400">OCO</span>}
+                    </div>
+                    {order.status === "pending" && (
+                      <button onClick={() => handleCancel(order.id)} disabled={cancellingId === order.id}
+                        className="text-xs px-2 py-1 rounded bg-red-600/10 text-red-400 hover:bg-red-600/20 disabled:opacity-50 transition-colors"
+                      >{cancellingId === order.id ? "..." : "취소"}</button>
+                    )}
+                  </div>
+                  <div className="font-medium text-sm">{order.name} <span className="text-[var(--muted)]">({order.ticker})</span></div>
+                  <div className="grid grid-cols-2 gap-1 mt-1 text-xs text-[var(--muted)]">
+                    <span>수량: {order.quantity}주</span>
+                    {order.target_price && <span>목표가: {order.target_price.toLocaleString()}</span>}
+                    {order.stop_price && <span>손절가: {order.stop_price.toLocaleString()}</span>}
+                    {order.scheduled_at && <span>예약: {new Date(order.scheduled_at).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>}
+                    {order.executed_price && <span>체결가: {order.executed_price.toLocaleString()}</span>}
+                  </div>
+                  <div className="text-[10px] text-[var(--muted)] mt-1">
+                    {order.created_at && new Date(order.created_at).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                    {order.cancel_reason && <span className="ml-2">({order.cancel_reason})</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Desktop table */}
+          <div className="hidden md:block bg-[var(--card)] border border-[var(--card-border)] rounded-lg overflow-hidden">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-[var(--card-border)] text-left text-sm text-[var(--muted)]">
+                  <th className="p-3">종목</th>
+                  <th className="p-3 text-center">유형</th>
+                  <th className="p-3 text-right">수량</th>
+                  <th className="p-3 text-right">조건</th>
+                  <th className="p-3 text-center">상태</th>
+                  <th className="p-3">등록일</th>
+                  <th className="p-3 w-16"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {orders.map((order) => {
+                  const st = ORDER_STATUS_LABELS[order.status] ?? ORDER_STATUS_LABELS.pending;
+                  return (
+                    <tr key={order.id} className="border-b border-[var(--card-border)] hover:bg-[var(--surface-hover)] text-sm">
+                      <td className="p-3">
+                        <span className="font-medium">{order.name}</span>
+                        <span className="text-[var(--muted)] ml-1">({order.ticker})</span>
+                        {order.oco_group_id && <span className="text-[10px] text-purple-400 ml-1">OCO</span>}
+                      </td>
+                      <td className="p-3 text-center">
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-[var(--surface-active)]">{ORDER_TYPE_LABELS[order.order_type] ?? order.order_type}</span>
+                      </td>
+                      <td className="p-3 text-right">{order.quantity}주</td>
+                      <td className="p-3 text-right text-xs">
+                        {order.target_price && <div>목표 {order.target_price.toLocaleString()}</div>}
+                        {order.stop_price && <div>손절 {order.stop_price.toLocaleString()}</div>}
+                        {order.scheduled_at && <div>{new Date(order.scheduled_at).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</div>}
+                        {order.executed_price && <div className="text-green-400">체결 {order.executed_price.toLocaleString()}</div>}
+                      </td>
+                      <td className="p-3 text-center">
+                        <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${st.color}`}>{st.label}</span>
+                        {order.cancel_reason && <div className="text-[10px] text-[var(--muted)] mt-0.5">{order.cancel_reason}</div>}
+                      </td>
+                      <td className="p-3 text-[var(--muted)] text-xs">
+                        {order.created_at && new Date(order.created_at).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                      </td>
+                      <td className="p-3">
+                        {order.status === "pending" && (
+                          <button onClick={() => handleCancel(order.id)} disabled={cancellingId === order.id}
+                            className="text-xs px-2 py-1 rounded bg-red-600/10 text-red-400 hover:bg-red-600/20 disabled:opacity-50 transition-colors"
+                          >{cancellingId === order.id ? "..." : "취소"}</button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -1538,6 +1885,11 @@ export default function PaperTradingPage() {
         )}
       </div>
 
+      {/* Orders Panel */}
+      {activeAccountId && (
+        <OrdersPanel accountId={activeAccountId} onRefresh={handleRefresh} />
+      )}
+
       {/* Recommended Stocks */}
       {activeAccountId && (
         <RecommendedBuyList
@@ -1678,7 +2030,7 @@ export default function PaperTradingPage() {
                           <span className="font-medium text-sm">{t.name} ({t.ticker})</span>
                         </div>
                         <span className="text-xs text-[var(--muted)]">
-                          {new Date(t.executed_at).toLocaleDateString("ko-KR")}
+                          {new Date(t.executed_at).toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul" })}
                         </span>
                       </div>
                       <div className="flex items-center justify-between text-sm">
@@ -1729,7 +2081,7 @@ export default function PaperTradingPage() {
                             <span className="text-xs text-[var(--muted)]">{t.source === "recommendation" ? "추천" : "수동"}</span>
                           </td>
                           <td className="p-3 text-[var(--muted)]">
-                            {new Date(t.executed_at).toLocaleString("ko-KR", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                            {new Date(t.executed_at).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                           </td>
                         </tr>
                       ))}

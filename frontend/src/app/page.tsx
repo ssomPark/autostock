@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth-context";
 import Link from "next/link";
@@ -9,7 +10,8 @@ import { RecommendationList } from "@/components/dashboard/recommendation-list";
 import { RecentNews } from "@/components/dashboard/recent-news";
 import { PipelineStatus } from "@/components/dashboard/pipeline-status";
 import { PinnedStocks } from "@/components/dashboard/pinned-stocks";
-import { fetchDashboardSummary } from "@/lib/api";
+import { fetchDashboardSummary, fetchPublicUpdates } from "@/lib/api";
+import type { UpdatePost } from "@/lib/api";
 import { AdUnit } from "@/components/ads/ad-unit";
 
 /* ──────────────────────────── Feature Cards Data ──────────────────────────── */
@@ -83,6 +85,74 @@ const comparisonRows = [
   { feature: "핀 고정 (즐겨찾기)", guest: "\u2717", member: "\u2713" },
 ];
 
+/* ──────────────────────────── Update Banner ──────────────────────────── */
+
+const UPDATE_CAT_BADGE: Record<string, { label: string; cls: string }> = {
+  feature: { label: "기능 추가", cls: "bg-blue-500/15 text-blue-400 border-blue-500/25" },
+  bugfix: { label: "버그 수정", cls: "bg-red-500/15 text-red-400 border-red-500/25" },
+  announcement: { label: "공지", cls: "bg-amber-500/15 text-amber-400 border-amber-500/25" },
+  maintenance: { label: "점검", cls: "bg-purple-500/15 text-purple-400 border-purple-500/25" },
+};
+
+function UpdateBanner() {
+  const { data } = useQuery({
+    queryKey: ["publicUpdates"],
+    queryFn: () => fetchPublicUpdates(5),
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const posts: UpdatePost[] = data?.posts ?? [];
+  const [expanded, setExpanded] = useState<number | null>(null);
+
+  if (posts.length === 0) return null;
+
+  return (
+    <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-xl overflow-hidden">
+      <div className="px-4 py-3 border-b border-[var(--card-border)] flex items-center gap-2">
+        <span className="text-sm font-semibold">업데이트</span>
+        <span className="text-xs text-[var(--muted)]">최근 변경사항</span>
+      </div>
+      <div className="divide-y divide-[var(--card-border)]">
+        {posts.map((p) => {
+          const badge = UPDATE_CAT_BADGE[p.category] ?? UPDATE_CAT_BADGE.announcement;
+          const isOpen = expanded === p.id;
+          return (
+            <div key={p.id} className="px-4 py-3">
+              <button
+                onClick={() => setExpanded(isOpen ? null : p.id)}
+                className="w-full flex items-start gap-3 text-left"
+              >
+                <span className={`shrink-0 mt-0.5 px-2 py-0.5 rounded text-[10px] font-medium border ${badge.cls}`}>
+                  {badge.label}
+                </span>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium truncate">{p.title}</span>
+                    <span className="shrink-0 text-[10px] text-[var(--muted)]">
+                      {p.created_at?.split("T")[0]}
+                    </span>
+                  </div>
+                  {isOpen && (
+                    <p className="mt-2 text-sm text-[var(--muted)] whitespace-pre-wrap leading-relaxed">
+                      {p.content}
+                    </p>
+                  )}
+                </div>
+                <svg
+                  className={`shrink-0 mt-1 w-4 h-4 text-[var(--muted)] transition-transform ${isOpen ? "rotate-180" : ""}`}
+                  fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /* ──────────────────────────── Welcome Page ──────────────────────────── */
 
 function WelcomePage({ onLogin }: { onLogin: () => void }) {
@@ -123,10 +193,13 @@ function WelcomePage({ onLogin }: { onLogin: () => void }) {
           </Link>
         </div>
         <p className="text-[10px] text-[var(--muted)] max-w-md mx-auto pt-2 leading-relaxed">
-          로그인 시 이메일·이름·프로필 사진, 분석 기록, 포트폴리오, 모의 투자 내역이 서버에 저장됩니다.
-          비밀번호는 저장되지 않습니다.
+          로그인 시 이메일·이름·프로필 사진, 분석 기록, 모의 투자 내역이 서버에 저장됩니다.
+          포트폴리오는 로컬/서버 저장을 선택할 수 있습니다. 비밀번호는 저장되지 않습니다.
         </p>
       </section>
+
+      {/* Update Banner */}
+      <UpdateBanner />
 
       {/* Feature Cards */}
       <section className="space-y-6">
@@ -221,8 +294,8 @@ function WelcomePage({ onLogin }: { onLogin: () => void }) {
           </Link>
         </div>
         <p className="text-[10px] text-[var(--muted)] max-w-md mx-auto leading-relaxed">
-          로그인 시 이메일·이름·프로필 사진, 분석 기록, 포트폴리오, 모의 투자 내역이 저장됩니다.
-          비밀번호는 저장하지 않습니다.
+          로그인 시 이메일·이름·프로필 사진, 분석 기록, 모의 투자 내역이 서버에 저장됩니다.
+          포트폴리오는 로컬/서버 저장을 선택할 수 있습니다. 비밀번호는 저장하지 않습니다.
         </p>
       </section>
     </div>
@@ -242,6 +315,7 @@ function Dashboard() {
   return (
     <div className="space-y-6">
       <DashboardHeader />
+      <UpdateBanner />
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         <SignalSummary label="매수" count={summary?.buy_count ?? 0} color="buy" />
         <SignalSummary label="매도" count={summary?.sell_count ?? 0} color="sell" />

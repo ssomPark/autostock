@@ -43,7 +43,7 @@ class AddHoldingIn(BaseModel):
     ticker: str
     name: str
     market: str
-    quantity: int
+    quantity: float
     avg_buy_price: float
     currency: str = "KRW"
 
@@ -52,7 +52,7 @@ class HoldingItem(BaseModel):
     ticker: str
     name: str
     market: str
-    quantity: int
+    quantity: float
     avg_buy_price: float
     currency: str = "KRW"
 

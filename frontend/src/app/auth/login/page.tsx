@@ -55,11 +55,10 @@ export default function LoginPage() {
           <ul className="text-[10px] text-[var(--muted)] space-y-0.5 list-disc list-inside">
             <li>Google 계정 이메일, 이름, 프로필 사진</li>
             <li>분석 기록 (핀 고정 포함), 메모</li>
-            <li>포트폴리오</li>
             <li>모의 투자 계좌, 거래 내역</li>
           </ul>
           <p className="text-[10px] text-[var(--muted)] leading-relaxed">
-            비밀번호는 저장되지 않습니다.
+            포트폴리오는 로컬/서버 저장을 선택할 수 있습니다. 비밀번호는 저장되지 않습니다.
           </p>
         </div>
       </div>
