@@ -276,6 +276,18 @@ export function fetchPipelineStatus() {
   return fetchJSON("/pipeline/status");
 }
 
+export interface MarketIndex {
+  key: string;
+  name: string;
+  price: number;
+  change: number;
+  change_pct: number;
+}
+
+export function fetchMarketIndices(): Promise<{ success: boolean; data: MarketIndex[] }> {
+  return fetchJSON("/prices/indices");
+}
+
 export function fetchPipelineHistory(limit: number = 10) {
   return fetchJSON(`/pipeline/history?limit=${limit}`);
 }

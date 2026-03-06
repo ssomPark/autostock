@@ -63,7 +63,7 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_BACKEND_URL: ""
-        NEXT_PUBLIC_ADSENSE_CLIENT: ""
+        NEXT_PUBLIC_ADSENSE_CLIENT: "ca-pub-8753086842347264"
         BACKEND_INTERNAL_URL: "http://traderadar-backend:8000"
     container_name: traderadar-frontend
     ports:

@@ -17,10 +17,25 @@ from src.api.routes.recommendations import _get_latest_pipeline_ids
 from src.services.market_data_service import MarketDataService
 from src.utils.market_hours import get_market_status, is_market_open
 
+import time as _time
+
+import yfinance as yf
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 _market_data_svc = MarketDataService()
+
+# --- Market indices cache (5-min) ---
+_indices_cache: dict | None = None
+_indices_cache_ts: float = 0
+
+MARKET_INDICES = [
+    {"symbol": "^KS11", "name": "코스피", "key": "KOSPI"},
+    {"symbol": "^KQ11", "name": "코스닥", "key": "KOSDAQ"},
+    {"symbol": "^GSPC", "name": "S&P 500", "key": "SP500"},
+    {"symbol": "^IXIC", "name": "나스닥", "key": "NASDAQ"},
+]
 
 
 def _sanitize(obj: Any) -> Any:
@@ -49,6 +64,64 @@ def _market_to_type(market: str) -> str:
 async def get_market_status_endpoint():
     """Get current open/closed status for KR and US markets."""
     return {"success": True, "data": get_market_status()}
+
+
+@router.get("/indices")
+async def get_market_indices():
+    """주요 시장 지수 (코스피, 코스닥, S&P 500, 나스닥). 5분 캐시."""
+    global _indices_cache, _indices_cache_ts
+
+    now = _time.time()
+    if _indices_cache and now - _indices_cache_ts < 300:
+        return {"success": True, "data": _indices_cache}
+
+    def _fetch_all():
+        symbols = [idx["symbol"] for idx in MARKET_INDICES]
+        tickers = yf.Tickers(" ".join(symbols))
+        results = []
+        for idx_info in MARKET_INDICES:
+            sym = idx_info["symbol"]
+            try:
+                hist = tickers.tickers[sym].history(period="2d")
+                if hist.empty or len(hist) < 1:
+                    results.append({
+                        "key": idx_info["key"],
+                        "name": idx_info["name"],
+                        "price": 0,
+                        "change": 0,
+                        "change_pct": 0,
+                    })
+                    continue
+                current = float(hist["Close"].iloc[-1])
+                prev = float(hist["Close"].iloc[-2]) if len(hist) >= 2 else current
+                change = current - prev
+                change_pct = (change / prev * 100) if prev > 0 else 0
+                results.append({
+                    "key": idx_info["key"],
+                    "name": idx_info["name"],
+                    "price": round(current, 2),
+                    "change": round(change, 2),
+                    "change_pct": round(change_pct, 2),
+                })
+            except Exception as e:
+                logger.warning(f"Failed to fetch index {sym}: {e}")
+                results.append({
+                    "key": idx_info["key"],
+                    "name": idx_info["name"],
+                    "price": 0,
+                    "change": 0,
+                    "change_pct": 0,
+                })
+        return results
+
+    try:
+        data = await asyncio.to_thread(_fetch_all)
+        _indices_cache = data
+        _indices_cache_ts = now
+        return {"success": True, "data": _sanitize(data)}
+    except Exception as e:
+        logger.error(f"Market indices fetch error: {e}")
+        return {"success": True, "data": _indices_cache or []}
 
 
 @router.get("/batch")

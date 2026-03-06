@@ -423,6 +423,23 @@ async def save_analysis(
         grade_changed = existing.grade != body.grade
         time_elapsed = (now - existing.analyzed_at).total_seconds() > 86400 if existing.analyzed_at else True
 
+        # 신호 변경 시 알림 생성
+        if signal_changed:
+            try:
+                from src.api.routes.notifications import create_notification
+                old_label = {"BUY": "매수", "SELL": "매도", "HOLD": "관망"}.get(existing.signal, existing.signal)
+                new_label = {"BUY": "매수", "SELL": "매도", "HOLD": "관망"}.get(body.signal, body.signal)
+                await create_notification(
+                    session,
+                    user_id=user.id,
+                    type="recommendation",
+                    title=f"{body.name} 신호 변경: {old_label} → {new_label}",
+                    message=f"{body.name}({body.ticker})의 매매 신호가 변경되었습니다. 등급: {body.grade}",
+                    link=f"/analysis/{body.ticker}?market={body.market}",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to create signal change notification: {e}")
+
         if signal_changed or grade_changed or time_elapsed:
             should_create_new = True
         else:

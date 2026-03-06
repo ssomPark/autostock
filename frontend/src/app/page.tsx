@@ -5,13 +5,10 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/lib/auth-context";
 import Link from "next/link";
 import { DashboardHeader } from "@/components/dashboard/header";
-import { SignalSummary } from "@/components/dashboard/signal-summary";
-import { RecommendationList } from "@/components/dashboard/recommendation-list";
+import { MarketOverview } from "@/components/dashboard/market-overview";
 import { RecentNews } from "@/components/dashboard/recent-news";
-import { PipelineStatus } from "@/components/dashboard/pipeline-status";
 import { PinnedStocks } from "@/components/dashboard/pinned-stocks";
 import {
-  fetchDashboardSummary,
   fetchPublicUpdates,
   fetchNotifications,
   fetchSectorHeatmap,
@@ -172,7 +169,7 @@ function WelcomePage({ onLogin }: { onLogin: () => void }) {
           AI 기반 주식 분석 플랫폼
         </div>
         <h1 className="text-4xl md:text-5xl font-bold tracking-tight">
-          Trade<span className="text-blue-500">Radar</span>
+          Trade<span className="text-blue-500">Radars</span>
         </h1>
         <p className="text-lg text-[var(--muted)] max-w-xl mx-auto leading-relaxed">
           한국·미국 주식의 기술적 분석, AI 매매 추천, 뉴스 감성 분석까지.
@@ -456,38 +453,22 @@ function PortfolioQuickSummary() {
   );
 }
 
-/* ──────────────────────────── Dashboard (기존) ──────────────────────────── */
+/* ──────────────────────────── Dashboard ──────────────────────────── */
 
 function Dashboard() {
-  const { data } = useQuery({
-    queryKey: ["dashboard"],
-    queryFn: fetchDashboardSummary,
-  });
-
-  const summary = data?.data;
-
   return (
     <div className="space-y-6">
       <DashboardHeader />
-      <UpdateBanner />
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-        <SignalSummary label="매수" count={summary?.buy_count ?? 0} color="buy" />
-        <SignalSummary label="매도" count={summary?.sell_count ?? 0} color="sell" />
-        <SignalSummary label="관망" count={summary?.hold_count ?? 0} color="hold" />
-        <PipelineStatus />
+      <MarketOverview />
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <UpdateBanner />
+        <RecentNews />
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <SectorQuickView />
+        <PortfolioQuickSummary />
       </div>
       <PinnedStocks />
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2">
-          <RecommendationList />
-        </div>
-        <div className="space-y-4">
-          <RecentNews />
-          <SectorQuickView />
-          <RecentNotificationsWidget />
-          <PortfolioQuickSummary />
-        </div>
-      </div>
       <AdUnit slot="dashboard-bottom" className="mt-6" />
     </div>
   );
