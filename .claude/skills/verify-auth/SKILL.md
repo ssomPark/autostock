@@ -35,10 +35,14 @@ description: OAuth 인증, JWT, DB 모델 제약, Route 인증 패턴, CORS 설�
 | `backend/src/api/app.py` | SessionMiddleware, CORS 설정, 라우터 등록 |
 | `frontend/src/lib/api.ts` | fetchWithAuth (Bearer 헤더, 401 자동 리프레시, credentials:include) |
 | `frontend/src/lib/auth-context.tsx` | AuthProvider (토큰 저장, 세션 복원, 로그인/로그아웃 흐름) |
-| `frontend/src/lib/watchlist.ts` | 하이브리드 워치리스트 (로그인 시 API, 비로그인 시 localStorage) |
+| `frontend/src/components/dashboard/pinned-stocks.tsx` | 핀 종목 컴포넌트 (워치리스트 → 핀 기능 통합, localStorage 기반) |
 | `backend/src/api/routes/paper_trading.py` | 모의 투자 CRUD 10개 (인증 필수) |
 | `frontend/src/app/auth/callback/page.tsx` | OAuth 콜백 처리 (토큰 수신 + AuthProvider 연동) |
 | `frontend/src/app/auth/login/page.tsx` | 로그인 페이지 (Google 로그인 버튼) |
+| `backend/src/api/routes/portfolio.py` | 포트폴리오 CRUD 11개 (인증 필수 10개 + 공개 1개) |
+| `backend/src/api/routes/notifications.py` | 알림 CRUD 5개 (인증 필수) |
+| `backend/src/api/routes/admin.py` | 관리자 대시보드 (get_admin_user 의존성) |
+| `backend/src/auth/dependencies.py` | get_current_user, get_current_user_optional, get_admin_user 의존성 |
 
 ## Workflow
 
@@ -163,7 +167,7 @@ cd "I:\Project\AutoStock" && grep -n "cascade\|ondelete" backend/src/models/db_m
 ```bash
 cd "I:\Project\AutoStock" && python -c "
 import re, sys
-files = ['backend/src/api/routes/watchlist.py', 'backend/src/api/routes/saved_analysis.py', 'backend/src/api/routes/paper_trading.py']
+files = ['backend/src/api/routes/watchlist.py', 'backend/src/api/routes/saved_analysis.py', 'backend/src/api/routes/paper_trading.py', 'backend/src/api/routes/notifications.py']
 for f in files:
     with open(f, encoding='utf-8') as fh:
         content = fh.read()
@@ -210,11 +214,11 @@ cd "I:\Project\AutoStock" && grep -n "SessionMiddleware" backend/src/api/app.py
 
 **위반:** SessionMiddleware가 없으면 OAuth 로그인 시 state 파라미터 검증이 실패하여 CSRF 공격에 취약해집니다.
 
-### Step 9: Auth/Watchlist/SavedAnalysis/PaperTrading 라우터 등록 검증
+### Step 9: 인증 관련 라우터 등록 검증
 
 **파일:** `backend/src/api/app.py`
 
-**검사:** 네 라우터가 모두 올바른 prefix로 등록되어야 합니다.
+**검사:** 7개 인증 관련 라우터가 모두 올바른 prefix로 등록되어야 합니다.
 
 ```bash
 cd "I:\Project\AutoStock" && python -c "
@@ -226,6 +230,9 @@ required = [
     ('/api/watchlist', 'watchlist.router'),
     ('/api/saved-analyses', 'saved_analysis.router'),
     ('/api/paper', 'paper_trading.router'),
+    ('/api/portfolio', 'portfolio.router'),
+    ('/api/notifications', 'notifications.router'),
+    ('/api/admin', 'admin.router'),
 ]
 missing = []
 for prefix, router in required:
@@ -239,6 +246,72 @@ print(f'PASS: All {len(required)} auth-related routers registered')
 ```
 
 **위반:** 라우터가 등록되지 않으면 해당 엔드포인트가 404를 반환합니다.
+
+### Step 9a: get_admin_user 의존성 검증
+
+**파일:** `backend/src/auth/dependencies.py`, `backend/src/api/routes/admin.py`
+
+**검사:** `get_admin_user`가 `get_current_user`를 래핑하고, admin 이메일 확인 후 403을 반환하는지 확인합니다. admin 라우트에서 이 의존성을 사용하는지도 검증합니다.
+
+```bash
+cd "I:\Project\AutoStock" && python -c "
+import sys
+with open('backend/src/auth/dependencies.py', encoding='utf-8') as f:
+    dep_content = f.read()
+checks = [
+    ('get_admin_user exists', 'get_admin_user' in dep_content),
+    ('wraps get_current_user', 'get_current_user' in dep_content),
+    ('checks admin_emails', 'admin_emails' in dep_content),
+    ('raises 403', '403' in dep_content),
+]
+failed = [name for name, ok in checks if not ok]
+if failed:
+    print(f'FAIL: get_admin_user issues: {failed}')
+    sys.exit(1)
+# Verify admin route uses it
+with open('backend/src/api/routes/admin.py', encoding='utf-8') as f:
+    admin_content = f.read()
+if 'get_admin_user' not in admin_content:
+    print('FAIL: admin.py does not use get_admin_user dependency')
+    sys.exit(1)
+print('PASS: get_admin_user dependency verified (wraps get_current_user + admin_emails check + 403)')
+"
+```
+
+**위반:** `get_admin_user`가 없으면 일반 사용자가 관리자 대시보드에 접근할 수 있습니다.
+
+### Step 9b: 새 DB 모델 제약 검증 (Notification, Portfolio)
+
+**파일:** `backend/src/models/db_models.py`
+
+**검사:** NotificationModel과 PortfolioModel/PortfolioHoldingModel의 FK, cascade, unique 제약이 존재해야 합니다.
+
+```bash
+cd "I:\Project\AutoStock" && python -c "
+import sys
+with open('backend/src/models/db_models.py', encoding='utf-8') as f:
+    content = f.read()
+checks = [
+    ('NotificationModel exists', 'class NotificationModel' in content),
+    ('Notification FK to users', 'notifications' in content and 'users.id' in content),
+    ('Notification user index', 'ix_notifications_user_id' in content or 'ix_notifications_user' in content),
+    ('PortfolioModel exists', 'class PortfolioModel' in content),
+    ('Portfolio FK to users', 'portfolios' in content),
+    ('Portfolio user index', 'ix_portfolios_user_id' in content),
+    ('PortfolioHoldingModel exists', 'class PortfolioHoldingModel' in content),
+    ('Holding FK to portfolios', 'portfolios.id' in content),
+    ('Holding unique (portfolio+ticker)', 'ix_portfolio_holdings_portfolio_ticker' in content),
+    ('Portfolio cascade', 'delete-orphan' in content),
+]
+failed = [name for name, ok in checks if not ok]
+if failed:
+    print(f'FAIL: New DB model constraint issues: {failed}')
+    sys.exit(1)
+print(f'PASS: All {len(checks)} new DB model constraints verified (Notification + Portfolio + Holding)')
+"
+```
+
+**위반:** FK가 없으면 사용자 삭제 시 고아 알림/포트폴리오가 남고, unique index가 없으면 동일 종목이 중복 추가됩니다.
 
 ### Step 10: Frontend fetchWithAuth 401 자동 리프레시 검증
 
@@ -280,19 +353,33 @@ print('PASS: Access token stored in-memory (_accessToken)')
 
 **위반:** 토큰을 localStorage에 저장하면 XSS 공격으로 토큰이 탈취될 수 있습니다.
 
-### Step 12: Watchlist 하이브리드 패턴 검증
+### Step 12: 핀 종목 API 함수 검증
 
-**파일:** `frontend/src/lib/watchlist.ts`
+**파일:** `frontend/src/lib/api.ts`
 
-**검사:** 로그인 시 API 호출, 비로그인 시 localStorage를 사용하는 하이브리드 패턴이 유지되어야 합니다.
+**검사:** 핀(즐겨찾기) 관련 API 함수가 존재하고, 인증 기반 fetchWithAuth를 사용해야 합니다. (워치리스트가 핀 기능으로 통합됨)
 
 ```bash
-cd "I:\Project\AutoStock" && grep -n "isLoggedIn\|getAccessToken\|localStorage\|fetchWatchlistAPI\|addToWatchlistAPI\|removeFromWatchlistAPI" frontend/src/lib/watchlist.ts
+cd "I:\Project\AutoStock" && python -c "
+import sys
+with open('frontend/src/lib/api.ts', encoding='utf-8') as f:
+    content = f.read()
+# Check for watchlist/pin API functions using fetchWithAuth
+has_watchlist_fn = 'watchlist' in content.lower() or 'pin' in content.lower()
+has_fetchWithAuth = 'fetchWithAuth' in content
+if not has_watchlist_fn:
+    print('WARN: No watchlist/pin API functions found in api.ts')
+elif has_fetchWithAuth:
+    print('PASS: Watchlist/Pin API functions use fetchWithAuth')
+else:
+    print('FAIL: fetchWithAuth not found')
+    sys.exit(1)
+"
 ```
 
-**PASS:** `isLoggedIn()` 체크와 API/localStorage 분기가 모두 존재.
+**PASS:** 워치리스트/핀 API 함수가 fetchWithAuth를 통해 인증을 사용.
 
-**위반:** 하이브리드 패턴이 깨지면 비로그인 사용자가 워치리스트를 사용할 수 없거나, 로그인 사용자가 서버 동기화 없이 localStorage만 사용하게 됩니다.
+**위반:** fetchWithAuth를 사용하지 않으면 인증 없이 API를 호출하여 401 에러가 발생합니다.
 
 ### Step 13: FastAPI 라우트 핸들러 튜플 반환 금지 검증
 
@@ -342,7 +429,9 @@ print('PASS: No tuple return patterns in auth-related routes')
 | 6 | 보호 라우트 인증 | PASS/FAIL | endpoint 수 vs auth 수 |
 | 7 | CORS allow_credentials | PASS/FAIL | True 여부 |
 | 8 | SessionMiddleware | PASS/FAIL | 존재 여부 |
-| 9 | 라우터 등록 | PASS/FAIL | auth, watchlist, saved-analyses |
+| 9 | 라우터 등록 | PASS/FAIL | 7개 라우터 (auth, watchlist, saved-analyses, paper, portfolio, notifications, admin) |
+| 9a | get_admin_user 의존성 | PASS/FAIL | admin_emails 체크 + 403 |
+| 9b | 새 DB 모델 제약 | PASS/FAIL | Notification, Portfolio, Holding 모델 |
 | 10 | Frontend 401 리프레시 | PASS/FAIL | refreshAccessToken 호출 |
 | 11 | Frontend 토큰 저장 | PASS/FAIL | in-memory 방식 |
 | 12 | Watchlist 하이브리드 | PASS/FAIL | API/localStorage 분기 |

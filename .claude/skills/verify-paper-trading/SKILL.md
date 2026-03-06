@@ -29,7 +29,7 @@ description: 모의 투자 잔고 일관성, 매수/매도 로직, 가격 fallba
 | `frontend/src/lib/api.ts` | 모의 투자 API 클라이언트 함수 (fetchWithAuth 사용) |
 | `frontend/src/app/paper-trading/page.tsx` | 모의 투자 메인 페이지 (포트폴리오 뷰, 매수/매도 UI) |
 | `frontend/src/components/paper-trading/order-modal.tsx` | 주문 모달 (수량 입력, 총 금액 계산, 추천 메타데이터) |
-| `frontend/src/app/recommendations/page.tsx` | 추천 페이지 "모의 매수" 버튼 연동 |
+| `frontend/src/components/paper-trading/portfolio-charts.tsx` | 4종 차트 컴포넌트 (DonutChart, AssetTrendChart, PnlBarChart, MarketPieChart) |
 
 ## Workflow
 
@@ -124,10 +124,10 @@ with open('backend/src/api/routes/paper_trading.py', encoding='utf-8') as f:
     content = f.read()
 checks = [
     ('total_revenue calc', 'body.quantity * body.price' in content),
-    ('cost_basis calc', 'avg_buy_price * body.quantity' in content),
-    ('realized_pnl calc', 'total_revenue - cost_basis' in content),
-    ('realized_pnl_pct calc', 'realized_pnl / cost_basis' in content),
-    ('cash add', 'cash_balance += total_revenue' in content),
+    ('cost_basis calc', 'avg_buy_price * body.quantity' in content or 'cost_per_share_krw * body.quantity' in content),
+    ('realized_pnl calc', 'total_revenue - cost_basis' in content or 'total_revenue_krw - cost_basis_krw' in content),
+    ('realized_pnl_pct calc', 'realized_pnl / cost_basis' in content or 'realized_pnl / cost_basis_krw' in content),
+    ('cash add', 'cash_balance += total_revenue' in content or 'cash_balance += total_revenue_krw' in content),
 ]
 failed = [name for name, ok in checks if not ok]
 if failed:
@@ -262,6 +262,90 @@ else:
 
 **위반:** 소유권 검증이 빠지면 인증된 사용자가 타인의 모의 투자 계좌/포지션에 접근할 수 있습니다.
 
+### Step 9: 입금(Deposit) 엔드포인트 검증
+
+**파일:** `backend/src/api/routes/paper_trading.py`
+
+**검사:** `POST /api/paper/deposit`이 `cash_balance`와 `bonus_balance`를 별도로 증가시키고, 응답에 새 잔고를 포함해야 합니다.
+
+```bash
+cd "I:\Project\AutoStock" && python -c "
+import sys
+with open('backend/src/api/routes/paper_trading.py', encoding='utf-8') as f:
+    content = f.read()
+checks = [
+    ('deposit endpoint exists', '@router.post(\"/deposit\")' in content or 'def deposit' in content),
+    ('cash_balance increase', 'cash_balance +=' in content and 'body.amount' in content),
+    ('bonus_balance tracking', 'bonus_balance' in content and 'body.amount' in content),
+    ('deposit response', 'deposit_amount' in content or 'new_cash_balance' in content or 'new_bonus_balance' in content),
+]
+failed = [name for name, ok in checks if not ok]
+if failed:
+    print(f'FAIL: Deposit endpoint issues: {failed}')
+    sys.exit(1)
+print('PASS: Deposit endpoint verified (cash + bonus balance update)')
+"
+```
+
+**위반:** 입금이 `cash_balance`만 증가시키고 `bonus_balance`를 추적하지 않으면 입금 출처를 구분할 수 없습니다.
+
+### Step 10: 추천 메타데이터 플로우 검증
+
+**파일:** `backend/src/api/routes/paper_trading.py`, `frontend/src/components/paper-trading/order-modal.tsx`
+
+**검사:** 추천에서 매수할 때 `recommendation_id`, `recommendation_action`, `recommendation_confidence`, `recommendation_grade` 4개 필드가 Position과 Trade에 저장되어야 합니다.
+
+```bash
+cd "I:\Project\AutoStock" && python -c "
+import sys
+with open('backend/src/api/routes/paper_trading.py', encoding='utf-8') as f:
+    be_content = f.read()
+rec_fields = ['recommendation_id', 'recommendation_action', 'recommendation_confidence', 'recommendation_grade']
+missing_be = [f for f in rec_fields if f not in be_content]
+if missing_be:
+    print(f'FAIL: Backend missing recommendation metadata fields: {missing_be}')
+    sys.exit(1)
+with open('frontend/src/components/paper-trading/order-modal.tsx', encoding='utf-8') as f:
+    fe_content = f.read()
+missing_fe = [f for f in ['recommendationId', 'recommendationAction', 'recommendationConfidence', 'recommendationGrade'] if f not in fe_content]
+if missing_fe:
+    print(f'FAIL: Frontend order-modal missing recommendation props: {missing_fe}')
+    sys.exit(1)
+print(f'PASS: All 4 recommendation metadata fields flow through FE order-modal → BE position/trade')
+"
+```
+
+**위반:** 추천 메타데이터가 누락되면 매수 이력에서 어떤 추천에 의한 매매인지 추적할 수 없습니다.
+
+### Step 11: FE-BE API 동기화 검증 (확장)
+
+**파일:** `frontend/src/lib/api.ts`
+
+**검사:** deposit 함수가 추가되었는지 확인합니다.
+
+```bash
+cd "I:\Project\AutoStock" && python -c "
+import sys
+with open('frontend/src/lib/api.ts', encoding='utf-8') as f:
+    fe_content = f.read()
+required_fns = [
+    ('depositPaperAccount', '/api/paper/deposit'),
+]
+missing = []
+for fn_name, path in required_fns:
+    if fn_name not in fe_content:
+        missing.append(fn_name)
+    elif path not in fe_content:
+        missing.append(f'{fn_name} (path mismatch: {path})')
+if missing:
+    print(f'FAIL: Missing new API functions: {missing}')
+    sys.exit(1)
+print(f'PASS: Deposit API function present with correct path')
+"
+```
+
+**위반:** deposit API 함수가 없으면 프론트엔드에서 입금 기능이 작동하지 않습니다.
+
 ## Output Format
 
 ```markdown
@@ -275,6 +359,9 @@ else:
 | 6 | DB 모델 FK/Cascade | PASS/FAIL | FK, cascade, unique index |
 | 7 | FE-BE API 동기화 | PASS/FAIL | 함수 N개, 경로 일치 |
 | 8 | 계좌 소유권 검증 | PASS/FAIL | _verify_account_owner 호출 수 |
+| 9 | 입금 엔드포인트 | PASS/FAIL | cash + bonus balance |
+| 10 | 추천 메타데이터 플로우 | PASS/FAIL | 4개 필드 FE→BE |
+| 11 | Deposit API 함수 동기화 | PASS/FAIL | depositPaperAccount |
 ```
 
 ## Exceptions

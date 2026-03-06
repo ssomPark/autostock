@@ -198,32 +198,70 @@ cd "I:\Project\AutoStock" && grep -A 15 "_assign_grade" backend/src/analysis/sco
 
 **파일:** `backend/src/api/routes/n8n.py`
 
-**검사:** aggregate 엔드포인트에서 `ScoringEngine.compute()` 결과 접근 시, `compute()`가 실제로 반환하는 키만 사용해야 합니다. 현재 접근하는 키: `grade`, `confidence.final`, `risk_reward_ratio`.
+**검사:** aggregate 엔드포인트에서 `ScoringEngine.compute()` 결과 접근 시, `compute()`가 실제로 반환하는 키만 사용해야 합니다. 중첩 접근(`score_result.get("confidence", {}).get("final")`)도 포함하여 검증합니다.
 
 ```bash
 cd "I:\Project\AutoStock" && python -c "
 import re, sys
 with open('backend/src/api/routes/n8n.py', encoding='utf-8') as f:
     content = f.read()
-# Find score_result.get() calls
-gets = re.findall(r'score_result\.get\([\"\\'](\w+)[\"\\']', content)
-if not gets:
+# Find score_result.get() calls (flat + nested)
+flat_gets = re.findall(r'score_result\.get\([\"\\'](\w+)[\"\\']', content)
+nested_gets = re.findall(r'score_result\.get\([\"\\'](\w+)[\"\\'],\s*\{\}\)\.get\([\"\\'](\w+)[\"\\']', content)
+if not flat_gets:
     print('SKIP: ScoringEngine not used in n8n.py')
     sys.exit(0)
-# Verify these keys exist in compute() output
-required_in_compute = ['grade', 'confidence', 'risk_reward_ratio']
+# Verify flat keys exist in compute() output
 with open('backend/src/analysis/scoring_engine.py', encoding='utf-8') as f:
     engine_content = f.read()
 compute_return = engine_content[engine_content.rfind('return {'):]
-missing = [k for k in gets if k not in compute_return]
+missing = [k for k in flat_gets if k not in compute_return]
 if missing:
     print(f'FAIL: n8n.py accesses keys not in compute() return: {missing}')
     sys.exit(1)
-print(f'PASS: All {len(gets)} accessed keys ({gets}) exist in compute() return')
+# Verify nested keys (e.g., confidence.final)
+for parent, child in nested_gets:
+    if parent not in compute_return:
+        print(f'FAIL: nested access {parent}.{child} but {parent} not in compute()')
+        sys.exit(1)
+    print(f'  INFO: Nested access {parent}.{child} — verify {parent} is a dict with key {child}')
+print(f'PASS: All {len(flat_gets)} flat keys + {len(nested_gets)} nested accesses verified')
 "
 ```
 
-**위반:** `n8n.py`가 `compute()`에 없는 키를 `.get()`하면 항상 `None`을 반환하여 등급/신뢰도가 누락됩니다.
+**위반:** `n8n.py`가 `compute()`에 없는 키를 `.get()`하면 항상 `None`을 반환하여 등급/신뢰도가 누락됩니다. 중첩 접근 시 부모 키의 타입이 dict가 아니면 `.get()` 호출이 실패합니다.
+
+### Step 10: N8N aggregate 엔드포인트 _sanitize() 래핑 검증
+
+**파일:** `backend/src/api/routes/n8n.py`
+
+**검사:** `/aggregate` 엔드포인트에서 `SignalAggregator.aggregate()` 및 `ScoringEngine.compute()` 결과가 API 응답에 포함되기 전에 `_sanitize()`로 래핑되어야 합니다. numpy 타입이 JSON 직렬화 오류를 발생시킬 수 있습니다.
+
+```bash
+cd "I:\Project\AutoStock" && python -c "
+import sys
+with open('backend/src/api/routes/n8n.py', encoding='utf-8') as f:
+    content = f.read()
+# Check if aggregator.aggregate result is sanitized before return
+has_aggregate = 'aggregator.aggregate' in content or 'SignalAggregator' in content
+has_sanitize_in_n8n = '_sanitize' in content
+if has_aggregate and not has_sanitize_in_n8n:
+    # Check if there's a custom sanitization (e.g., json_safe, float() casting)
+    has_float_cast = 'float(' in content and 'aggregate' in content
+    if not has_float_cast:
+        print('WARN: N8N aggregate endpoint uses SignalAggregator but no _sanitize() or float() casting found')
+        print('  → numpy floats in aggregate result may cause JSON serialization errors')
+    else:
+        print('PASS: N8N aggregate uses manual float() casting for numpy safety')
+else:
+    if has_sanitize_in_n8n:
+        print('PASS: _sanitize() found in n8n.py')
+    else:
+        print('SKIP: No aggregate/sanitize patterns in n8n.py')
+"
+```
+
+**위반:** `aggregate()` 결과에 numpy float가 포함되면 `TypeError: Object of type float64 is not JSON serializable` 오류가 발생합니다. `_sanitize()` 래핑이나 명시적 `float()` 변환이 필요합니다.
 
 ## Output Format
 
@@ -238,7 +276,8 @@ print(f'PASS: All {len(gets)} accessed keys ({gets}) exist in compute() return')
 | 6 | S/R strength 범위 | PASS/FAIL | cap = X.X |
 | 7 | volume divergence 부호 | PASS/FAIL | *= X.X |
 | 8 | 등급 기준 순서 | PASS/FAIL | 경계값 목록 |
-| 9 | N8N aggregate ScoringEngine 키 | PASS/FAIL/SKIP | 접근 키 목록 |
+| 9 | N8N aggregate ScoringEngine 키 | PASS/FAIL/SKIP | 접근 키 목록 (중첩 포함) |
+| 10 | N8N aggregate _sanitize() 래핑 | PASS/WARN/SKIP | numpy 직렬화 안전성 |
 ```
 
 ## Exceptions

@@ -24,3 +24,13 @@ Thumbs.db
 # Data
 *.db
 *.sqlite3
+
+# Screenshots (Playwright verification)
+/*.png
+/*.jpeg
+
+# Videos
+*.mp4
+
+# Build artifacts
+tsconfig.tsbuildinfo
