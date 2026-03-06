@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import logging
 
+import yfinance as yf
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.db.database import get_async_session
 from src.models.db_models import RecommendationModel, PipelineRunModel
+from src.utils.redis_cache import cache_get_json, cache_set_json
 from src.utils.stock_name_resolver import resolve_kr_name
 
 logger = logging.getLogger(__name__)
@@ -135,6 +137,165 @@ async def _get_latest_pipeline_ids(
         if row:
             ids.append(row)
     return ids
+
+
+# --- Sector Heatmap ---
+
+# Korean sector map (industry code → sector name)
+_KR_SECTOR_MAP: dict[str, str] = {
+    "반도체": "Technology",
+    "전자부품": "Technology",
+    "소프트웨어": "Technology",
+    "IT서비스": "Technology",
+    "자동차": "Consumer Cyclical",
+    "화학": "Basic Materials",
+    "철강": "Basic Materials",
+    "제약": "Healthcare",
+    "바이오": "Healthcare",
+    "은행": "Financial Services",
+    "보험": "Financial Services",
+    "증권": "Financial Services",
+    "건설": "Industrials",
+    "기계": "Industrials",
+    "운송": "Industrials",
+    "식품": "Consumer Defensive",
+    "유통": "Consumer Cyclical",
+    "에너지": "Energy",
+    "통신": "Communication Services",
+    "미디어": "Communication Services",
+    "부동산": "Real Estate",
+}
+
+_SECTOR_KR_MAP = {
+    "Technology": "기술",
+    "Healthcare": "헬스케어",
+    "Financial Services": "금융",
+    "Consumer Cyclical": "경기소비재",
+    "Consumer Defensive": "필수소비재",
+    "Industrials": "산업재",
+    "Basic Materials": "소재",
+    "Energy": "에너지",
+    "Communication Services": "커뮤니케이션",
+    "Real Estate": "부동산",
+    "Utilities": "유틸리티",
+}
+
+
+def _get_sector_sync(ticker: str, market: str) -> str:
+    """Resolve sector for a ticker (synchronous)."""
+    # US stocks: yfinance
+    if not ticker.isdigit():
+        try:
+            info = yf.Ticker(ticker).info or {}
+            return info.get("sector", "Other")
+        except Exception:
+            return "Other"
+
+    # Korean stocks: try yfinance, fallback to map
+    try:
+        suffix = ".KQ" if market.upper() == "KOSDAQ" else ".KS"
+        info = yf.Ticker(f"{ticker}{suffix}").info or {}
+        sector = info.get("sector")
+        if sector:
+            return sector
+        industry = info.get("industry", "")
+        for k, v in _KR_SECTOR_MAP.items():
+            if k in industry:
+                return v
+    except Exception:
+        pass
+    return "Other"
+
+
+@router.get("/sector-heatmap")
+async def get_sector_heatmap(
+    session: AsyncSession = Depends(get_async_session),
+):
+    """Get sector heatmap data from latest recommendations."""
+    import asyncio
+
+    # Check cache first
+    cached = await cache_get_json("sector_heatmap")
+    if cached is not None:
+        return {"success": True, "data": cached}
+
+    pipeline_ids = await _get_latest_pipeline_ids(session, market="all")
+    if not pipeline_ids:
+        return {"success": True, "data": {"sectors": []}}
+
+    recs_result = await session.execute(
+        select(RecommendationModel)
+        .where(RecommendationModel.pipeline_run_id.in_(pipeline_ids))
+    )
+    all_recs = recs_result.scalars().all()
+
+    # Deduplicate
+    seen: dict[str, RecommendationModel] = {}
+    for r in all_recs:
+        if r.ticker not in seen or (r.confidence or 0) > (seen[r.ticker].confidence or 0):
+            seen[r.ticker] = r
+    recs = list(seen.values())
+
+    if not recs:
+        return {"success": True, "data": {"sectors": []}}
+
+    # Resolve sectors in parallel (with Redis per-ticker caching)
+    async def _resolve_sector(rec: RecommendationModel) -> tuple[RecommendationModel, str]:
+        cache_key = f"sector:{rec.ticker}"
+        cached_sector = await cache_get_json(cache_key)
+        if cached_sector is not None:
+            return rec, cached_sector
+        sector = await asyncio.to_thread(_get_sector_sync, rec.ticker, rec.market or "KOSPI")
+        await cache_set_json(cache_key, sector, ttl=86400)
+        return rec, sector
+
+    results = await asyncio.gather(*[_resolve_sector(r) for r in recs])
+
+    # Group by sector
+    sector_data: dict[str, dict] = {}
+    for rec, sector in results:
+        if sector not in sector_data:
+            sector_data[sector] = {
+                "name": sector,
+                "name_kr": _SECTOR_KR_MAP.get(sector, sector),
+                "total": 0,
+                "buy": 0,
+                "sell": 0,
+                "hold": 0,
+                "confidences": [],
+                "scores": [],
+                "tickers": [],
+            }
+        sd = sector_data[sector]
+        sd["total"] += 1
+        if rec.action == "BUY":
+            sd["buy"] += 1
+        elif rec.action == "SELL":
+            sd["sell"] += 1
+        else:
+            sd["hold"] += 1
+        if rec.confidence:
+            sd["confidences"].append(rec.confidence)
+        if rec.composite_score:
+            sd["scores"].append(rec.composite_score)
+        sd["tickers"].append(rec.ticker)
+
+    # Build response
+    sectors = []
+    for sd in sector_data.values():
+        confs = sd.pop("confidences")
+        scores = sd.pop("scores")
+        sd["avg_confidence"] = round(sum(confs) / len(confs) * 100, 1) if confs else 0
+        sd["avg_score"] = round(sum(scores) / len(scores), 3) if scores else 0
+        # Signal strength: (buy - sell) / total, range [-1, 1]
+        sd["signal_strength"] = round((sd["buy"] - sd["sell"]) / sd["total"], 2) if sd["total"] else 0
+        sectors.append(sd)
+
+    sectors.sort(key=lambda s: s["total"], reverse=True)
+
+    result = {"sectors": sectors}
+    await cache_set_json("sector_heatmap", result, ttl=600)
+    return {"success": True, "data": result}
 
 
 # NOTE: /summary/dashboard MUST be registered before /{ticker}

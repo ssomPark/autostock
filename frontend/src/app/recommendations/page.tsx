@@ -4,7 +4,7 @@ import { Fragment, useState, useMemo } from "react";
 import { useQuery, useQueries } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { fetchRecommendations, fetchScore, fetchFinancials, saveAnalysisAPI, togglePinAnalysis } from "@/lib/api";
+import { fetchRecommendations, fetchScore, fetchFinancials, saveAnalysisAPI, togglePinAnalysis, fetchSectorHeatmap, type SectorHeatmapItem } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { SparklineChart } from "@/components/charts/sparkline-chart";
 import { useLivePrices } from "@/hooks/use-live-prices";
@@ -309,6 +309,9 @@ export default function RecommendationsPage() {
           ))}
         </div>
       </div>
+
+      {/* 섹터 히트맵 */}
+      <SectorHeatmap />
 
       {/* 적중률 대시보드 */}
       {!isLoading && accuracyStats.total > 0 && (
@@ -702,6 +705,171 @@ export default function RecommendationsPage() {
         </>
       )}
 
+    </div>
+  );
+}
+
+/* ---- Sector Heatmap Component ---- */
+
+function SectorHeatmap() {
+  const [expanded, setExpanded] = useState(false);
+  const [hoveredSector, setHoveredSector] = useState<string | null>(null);
+  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number; below: boolean } | null>(null);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["sector-heatmap"],
+    queryFn: fetchSectorHeatmap,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const sectors: SectorHeatmapItem[] = data?.data?.sectors ?? [];
+  if (isLoading || sectors.length === 0) return null;
+
+  const maxTotal = Math.max(...sectors.map((s) => s.total));
+  const hoveredData = sectors.find((s) => s.name === hoveredSector);
+
+  const handleMouseEnter = (sector: SectorHeatmapItem, e: React.MouseEvent) => {
+    setHoveredSector(sector.name);
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const below = rect.top < 200;
+    setTooltipPos({
+      x: rect.left + rect.width / 2,
+      y: below ? rect.bottom : rect.top,
+      below,
+    });
+  };
+
+  return (
+    <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg overflow-visible">
+      <button
+        onClick={() => setExpanded((v) => !v)}
+        className="w-full flex items-center justify-between px-4 py-3 text-sm font-medium text-[var(--muted)] hover:text-[var(--foreground)] transition-colors"
+      >
+        <span className="flex items-center gap-2">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-blue-400">
+            <rect x="3" y="3" width="7" height="7" rx="1" />
+            <rect x="14" y="3" width="7" height="7" rx="1" />
+            <rect x="3" y="14" width="7" height="7" rx="1" />
+            <rect x="14" y="14" width="7" height="7" rx="1" />
+          </svg>
+          섹터 히트맵
+          <span className="text-xs opacity-60">({sectors.length}개 섹터)</span>
+        </span>
+        <span>{expanded ? "\u25B2" : "\u25BC"}</span>
+      </button>
+
+      {expanded && (
+        <div className="px-4 pb-4">
+          {/* Tooltip - fixed position */}
+          {hoveredData && tooltipPos && (
+            <div
+              className="fixed z-[9999] pointer-events-none"
+              style={{
+                left: tooltipPos.x,
+                top: tooltipPos.below ? tooltipPos.y + 8 : tooltipPos.y - 8,
+                transform: tooltipPos.below ? "translate(-50%, 0)" : "translate(-50%, -100%)",
+              }}
+            >
+              <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-3 shadow-xl text-xs space-y-1.5 min-w-[200px]">
+                <div className="font-medium text-sm">{hoveredData.name_kr} <span className="text-[var(--muted)] font-normal">({hoveredData.name})</span></div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[var(--muted)]">종목 수</span>
+                  <span className="font-medium">{hoveredData.total}</span>
+                </div>
+                <div className="flex gap-3">
+                  <span className="text-green-400 font-medium">매수 {hoveredData.buy}</span>
+                  <span className="text-red-400 font-medium">매도 {hoveredData.sell}</span>
+                  <span className="text-[var(--muted)]">관망 {hoveredData.hold}</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[var(--muted)]">평균 신뢰도</span>
+                  <span className="font-medium">{hoveredData.avg_confidence.toFixed(1)}%</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[var(--muted)]">신호 강도</span>
+                  <span className="font-medium">{(hoveredData.signal_strength * 100).toFixed(0)}%</span>
+                </div>
+                <div className="text-[var(--muted)] pt-1 border-t border-[var(--card-border)]">
+                  {hoveredData.tickers.slice(0, 6).join(", ")}
+                  {hoveredData.tickers.length > 6 && ` +${hoveredData.tickers.length - 6}`}
+                </div>
+                {/* Arrow */}
+                <div
+                  className="absolute left-1/2 -translate-x-1/2 w-2 h-2 rotate-45 bg-[var(--card)] border-[var(--card-border)]"
+                  style={tooltipPos.below
+                    ? { top: -4, borderTop: "1px solid", borderLeft: "1px solid" }
+                    : { bottom: -4, borderRight: "1px solid", borderBottom: "1px solid" }
+                  }
+                />
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+            {sectors.map((sector) => {
+              const buyRatio = sector.total > 0 ? sector.buy / sector.total : 0;
+              const sellRatio = sector.total > 0 ? sector.sell / sector.total : 0;
+              const holdRatio = sector.total > 0 ? sector.hold / sector.total : 0;
+              const bgColor =
+                buyRatio > 0.5
+                  ? `rgba(34,197,94,${0.08 + buyRatio * 0.12})`
+                  : sellRatio > 0.5
+                    ? `rgba(239,68,68,${0.08 + sellRatio * 0.12})`
+                    : "rgba(107,114,128,0.08)";
+              const borderColor =
+                buyRatio > 0.5
+                  ? "rgba(34,197,94,0.3)"
+                  : sellRatio > 0.5
+                    ? "rgba(239,68,68,0.3)"
+                    : "var(--card-border)";
+              const isHovered = hoveredSector === sector.name;
+
+              return (
+                <div
+                  key={sector.name}
+                  className="rounded-lg p-3 cursor-default transition-colors"
+                  style={{
+                    backgroundColor: isHovered ? (buyRatio > 0.5 ? "rgba(34,197,94,0.15)" : sellRatio > 0.5 ? "rgba(239,68,68,0.15)" : "rgba(107,114,128,0.15)") : bgColor,
+                    border: `1px solid ${borderColor}`,
+                  }}
+                  onMouseEnter={(e) => handleMouseEnter(sector, e)}
+                  onMouseLeave={() => { setHoveredSector(null); setTooltipPos(null); }}
+                >
+                  <div className="flex items-start justify-between gap-1">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium truncate">{sector.name_kr}</div>
+                      <div className="text-[11px] text-[var(--muted)] truncate">{sector.name}</div>
+                    </div>
+                    <span className="text-xs text-[var(--muted)] whitespace-nowrap mt-0.5">{sector.total}종목</span>
+                  </div>
+
+                  {/* BUY / SELL / HOLD 비율 바 */}
+                  <div className="flex h-1.5 rounded-full overflow-hidden mt-2.5 bg-white/5">
+                    {buyRatio > 0 && (
+                      <div className="bg-green-500/70" style={{ width: `${buyRatio * 100}%` }} />
+                    )}
+                    {holdRatio > 0 && (
+                      <div className="bg-gray-500/40" style={{ width: `${holdRatio * 100}%` }} />
+                    )}
+                    {sellRatio > 0 && (
+                      <div className="bg-red-500/70" style={{ width: `${sellRatio * 100}%` }} />
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between mt-2 text-[11px]">
+                    <div className="flex items-center gap-1.5">
+                      {sector.buy > 0 && <span className="text-green-400">{sector.buy}B</span>}
+                      {sector.sell > 0 && <span className="text-red-400">{sector.sell}S</span>}
+                      {sector.hold > 0 && <span className="text-[var(--muted)]">{sector.hold}H</span>}
+                    </div>
+                    <span className="text-[var(--muted)]">{sector.avg_confidence.toFixed(0)}%</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

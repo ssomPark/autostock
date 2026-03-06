@@ -304,6 +304,45 @@ export function fetchDashboardSummary() {
   return fetchJSON("/recommendations/summary/dashboard");
 }
 
+// --- Sector Heatmap ---
+
+export interface SectorHeatmapItem {
+  name: string;
+  name_kr: string;
+  total: number;
+  buy: number;
+  sell: number;
+  hold: number;
+  avg_confidence: number;
+  avg_score: number;
+  signal_strength: number;
+  tickers: string[];
+}
+
+export function fetchSectorHeatmap(): Promise<{ success: boolean; data: { sectors: SectorHeatmapItem[] } }> {
+  return fetchJSON("/recommendations/sector-heatmap");
+}
+
+// --- Compare Report ---
+
+export interface CompareReport {
+  overall: string;
+  best_pick: { ticker: string; reason: string };
+  comparison: Record<string, string>;
+  risk_comparison: string;
+  timing: string;
+}
+
+export async function generateCompareReport(
+  tickers: string[],
+  markets: string[],
+): Promise<{ success: boolean; data: CompareReport; cached: boolean }> {
+  return fetchWithAuth("/api/analysis/compare-report", {
+    method: "POST",
+    body: JSON.stringify({ tickers, markets }),
+  });
+}
+
 // --- Paper Trading API (authenticated, direct to backend) ---
 
 export async function fetchPaperAccounts() {
@@ -380,6 +419,72 @@ export async function fetchPaperSummary(accountId: number) {
 
 export async function fetchExchangeRate(): Promise<{ rate: number; pair: string }> {
   return fetchWithAuth("/api/paper/exchange-rate");
+}
+
+// --- Paper Orders API (지정가/손절/예약) ---
+
+export interface PaperOrder {
+  id: number;
+  account_id: number;
+  ticker: string;
+  name: string;
+  market: string;
+  quantity: number;
+  order_type: "limit_sell" | "stop_loss" | "scheduled";
+  target_price: number | null;
+  stop_price: number | null;
+  scheduled_at: string | null;
+  oco_group_id: string | null;
+  status: "pending" | "executed" | "cancelled";
+  executed_price: number | null;
+  executed_at: string | null;
+  trade_id: number | null;
+  cancel_reason: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export async function createPaperOrder(data: {
+  account_id: number;
+  ticker: string;
+  quantity: number;
+  order_type: "limit_sell" | "stop_loss" | "scheduled";
+  target_price?: number;
+  stop_price?: number;
+  scheduled_at?: string;
+}): Promise<PaperOrder> {
+  return fetchWithAuth("/api/paper/orders", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function createPaperOCOOrder(data: {
+  account_id: number;
+  ticker: string;
+  quantity: number;
+  target_price: number;
+  stop_price: number;
+}): Promise<{ oco_group_id: string; orders: PaperOrder[] }> {
+  return fetchWithAuth("/api/paper/orders/oco", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function fetchPaperOrders(
+  accountId: number,
+  params?: { status?: string; ticker?: string },
+): Promise<PaperOrder[]> {
+  const qs = new URLSearchParams();
+  if (params?.status) qs.set("status", params.status);
+  if (params?.ticker) qs.set("ticker", params.ticker);
+  const q = qs.toString();
+  return fetchWithAuth(`/api/paper/orders/${accountId}${q ? `?${q}` : ""}`);
+}
+
+export async function cancelPaperOrder(orderId: number): Promise<{ ok: boolean }> {
+  return fetchWithAuth(`/api/paper/orders/${orderId}`, { method: "DELETE" });
 }
 
 // --- Deposit API ---
@@ -704,6 +809,18 @@ export async function fetchAdminSavedAnalysesStats() {
   return fetchWithAuth("/api/admin/saved-analyses/stats");
 }
 
+export async function fetchAdminMetrics(period: number = 7) {
+  return fetchWithAuth(`/api/admin/metrics?period=${period}`);
+}
+
+export async function fetchAdminTopPages(): Promise<{ pages: { path: string; count: number }[] }> {
+  return fetchWithAuth("/api/admin/visitors/top-pages");
+}
+
+export async function triggerAdminMetricsSnapshot() {
+  return fetchWithAuth("/api/admin/metrics/snapshot", { method: "POST" });
+}
+
 export async function fetchAdminPaperTradingStats() {
   return fetchWithAuth("/api/admin/paper-trading/stats");
 }
@@ -729,6 +846,63 @@ export async function autoGenerateEvents(params: {
     method: "POST",
     body: JSON.stringify(params),
   });
+}
+
+// --- Admin Updates API ---
+
+export interface UpdatePost {
+  id: number;
+  title: string;
+  content: string;
+  category: "feature" | "bugfix" | "announcement" | "maintenance";
+  is_published: boolean;
+  created_at: string | null;
+  updated_at?: string | null;
+}
+
+export async function fetchAdminUpdates(params?: { page?: number; size?: number }) {
+  const qs = new URLSearchParams();
+  if (params?.page) qs.set("page", String(params.page));
+  if (params?.size) qs.set("size", String(params.size));
+  const q = qs.toString();
+  return fetchWithAuth(`/api/admin/updates${q ? `?${q}` : ""}`) as Promise<{
+    posts: UpdatePost[];
+    total: number;
+    page: number;
+    size: number;
+  }>;
+}
+
+export async function createAdminUpdate(data: {
+  title: string;
+  content: string;
+  category: string;
+  is_published: boolean;
+}): Promise<UpdatePost> {
+  return fetchWithAuth("/api/admin/updates", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateAdminUpdate(
+  id: number,
+  data: { title: string; content: string; category: string; is_published: boolean },
+): Promise<UpdatePost> {
+  return fetchWithAuth(`/api/admin/updates/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteAdminUpdate(id: number): Promise<{ ok: boolean }> {
+  return fetchWithAuth(`/api/admin/updates/${id}`, { method: "DELETE" });
+}
+
+export async function fetchPublicUpdates(limit: number = 5): Promise<{ posts: UpdatePost[] }> {
+  const res = await fetch(`${API_BASE}/updates?limit=${limit}`);
+  if (!res.ok) return { posts: [] };
+  return res.json();
 }
 
 // --- Navigation Order API ---
@@ -910,6 +1084,96 @@ export async function fetchPortfolioReport(portfolioId: number): Promise<{ succe
 
 export async function fetchReportLimit(): Promise<{ remaining: number; limit: number }> {
   return fetchWithAuth("/api/portfolio/report-limit");
+}
+
+// --- Community API ---
+
+export interface CommunityPost {
+  id: number;
+  user_id: number;
+  author_name: string | null;
+  author_avatar: string | null;
+  title: string;
+  content: string;
+  category: string;
+  view_count: number;
+  comment_count: number;
+  is_pinned: boolean;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface CommunityComment {
+  id: number;
+  post_id: number;
+  user_id: number;
+  author_name: string | null;
+  author_avatar: string | null;
+  content: string;
+  is_deleted: boolean;
+  created_at: string | null;
+}
+
+export async function fetchCommunityPosts(params?: {
+  page?: number;
+  size?: number;
+  category?: string;
+  sort_by?: string;
+}): Promise<{ posts: CommunityPost[]; total: number; page: number; size: number }> {
+  const qs = new URLSearchParams();
+  if (params?.page) qs.set("page", String(params.page));
+  if (params?.size) qs.set("size", String(params.size));
+  if (params?.category) qs.set("category", params.category);
+  if (params?.sort_by) qs.set("sort_by", params.sort_by);
+  const q = qs.toString();
+  return fetchJSON(`/community/posts${q ? `?${q}` : ""}`);
+}
+
+export async function fetchCommunityPost(id: number): Promise<CommunityPost> {
+  return fetchJSON(`/community/posts/${id}`);
+}
+
+export async function createCommunityPost(data: {
+  title: string;
+  content: string;
+  category: string;
+}): Promise<CommunityPost> {
+  return fetchWithAuth("/api/community/posts", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateCommunityPost(
+  id: number,
+  data: { title?: string; content?: string; category?: string },
+): Promise<CommunityPost> {
+  return fetchWithAuth(`/api/community/posts/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteCommunityPost(id: number): Promise<{ success: boolean }> {
+  return fetchWithAuth(`/api/community/posts/${id}`, { method: "DELETE" });
+}
+
+export async function fetchCommunityComments(postId: number): Promise<{ comments: CommunityComment[] }> {
+  return fetchJSON(`/community/posts/${postId}/comments`);
+}
+
+export async function createCommunityComment(
+  postId: number,
+  content: string,
+): Promise<CommunityComment> {
+  return fetchWithAuth(`/api/community/posts/${postId}/comments`, {
+    method: "POST",
+    body: JSON.stringify({ content }),
+  });
+}
+
+export async function deleteCommunityComment(commentId: number): Promise<{ success: boolean }> {
+  return fetchWithAuth(`/api/community/comments/${commentId}`, { method: "DELETE" });
 }
 
 export async function enrichHoldings(holdings: {

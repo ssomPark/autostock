@@ -6,7 +6,7 @@ Endpoints called by N8N workflow to orchestrate the analysis pipeline.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import yfinance as yf
 from fastapi import APIRouter, Depends
@@ -20,8 +20,10 @@ from src.db.database import get_async_session
 from src.models.db_models import (
     EventStockModel,
     MarketEventModel,
+    NotificationModel,
     PipelineRunModel,
     RecommendationModel,
+    SavedAnalysisModel,
 )
 from src.services.market_screener import MarketScreener
 from src.services.pipeline_tracker import tracker
@@ -116,7 +118,8 @@ async def _get_event_stocks(
     session: AsyncSession, market: str, days: int = 30
 ) -> list[dict]:
     """향후 N일 이내 이벤트의 positive 수혜종목 조회."""
-    now = datetime.now()
+    _KST = timezone(timedelta(hours=9))
+    now = datetime.now(_KST).replace(tzinfo=None)
     cutoff = now + timedelta(days=days)
     kr_markets = {"KOSPI", "KOSDAQ"}
 
@@ -181,7 +184,8 @@ async def _get_recent_recommendation_tickers(
 
 async def _get_stock_event_info(session: AsyncSession, ticker: str) -> str | None:
     """종목 관련 향후 30일 이벤트 정보 문자열 반환."""
-    now = datetime.now()
+    _KST = timezone(timedelta(hours=9))
+    now = datetime.now(_KST).replace(tzinfo=None)
     cutoff = now + timedelta(days=30)
 
     stmt = (
@@ -556,6 +560,44 @@ async def save_recommendations(
 
         await session.commit()
         logger.info(f"Saved {len(unique_recs)} recommendations for pipeline {req.pipeline_id}")
+
+        # --- 알림 생성: 핀 고정 종목과 매칭 ---
+        try:
+            saved_tickers = {rec.ticker for rec in unique_recs}
+            # 핀 고정한 사용자+종목 조회
+            pinned_result = await session.execute(
+                select(SavedAnalysisModel.user_id, SavedAnalysisModel.ticker, SavedAnalysisModel.name)
+                .where(
+                    SavedAnalysisModel.is_pinned == True,  # noqa: E712
+                    SavedAnalysisModel.ticker.in_(saved_tickers),
+                )
+                .distinct(SavedAnalysisModel.user_id, SavedAnalysisModel.ticker)
+            )
+            pinned_rows = pinned_result.all()
+
+            # 추천 데이터를 ticker로 인덱싱
+            rec_map = {rec.ticker: rec for rec in unique_recs}
+            notifications = []
+            for user_id, ticker, stock_name in pinned_rows:
+                rec = rec_map.get(ticker)
+                if not rec:
+                    continue
+                action_kr = "매수" if rec.action == "BUY" else "매도" if rec.action == "SELL" else "관망"
+                conf_pct = rec.confidence * 100 if rec.confidence < 1 else rec.confidence
+                notifications.append(NotificationModel(
+                    user_id=user_id,
+                    type="recommendation",
+                    title=f"{stock_name or ticker}: 새 {action_kr} 추천",
+                    message=f"신뢰도 {conf_pct:.0f}%, 목표가 {rec.target_price or '-'}",
+                    link="/recommendations",
+                ))
+
+            if notifications:
+                session.add_all(notifications)
+                await session.commit()
+                logger.info(f"Created {len(notifications)} pin-match notifications")
+        except Exception as e:
+            logger.warning(f"Notification creation failed (non-fatal): {e}")
 
         return {
             "success": True,

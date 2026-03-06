@@ -6,25 +6,27 @@ import asyncio
 import json
 import logging
 import urllib.parse
+from datetime import date
 
 import httpx
 import numpy as np
 import pandas as pd
 import yfinance as yf
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from src.analysis.candlestick_patterns import CandlestickDetector
 from src.analysis.chart_patterns import ChartPatternDetector
 from src.analysis.scoring_engine import ScoringEngine
 from src.analysis.support_resistance import SupportResistanceDetector
 from src.analysis.volume_analysis import VolumeAnalyzer
-from src.auth.dependencies import get_current_user_optional
+from src.auth.dependencies import get_current_user, get_current_user_optional
 from src.config.settings import settings
 from src.models.db_models import UserModel
 from src.services.market_data_service import MarketDataService
 from src.utils.rate_limiter import check_analysis_limit
-from src.utils.redis_cache import cache_get_json, cache_set_json
+from src.utils.redis_cache import _get_redis, cache_get_json, cache_set_json
 
 logger = logging.getLogger(__name__)
 
@@ -236,6 +238,78 @@ def _fetch_financials_sync(ticker: str, market: str) -> dict:
     }
 
 
+async def _generate_ai_comment(score_result: dict) -> dict:
+    """Generate an AI comment from score data using LLM, with Redis caching."""
+    ticker = score_result.get("ticker", "")
+    today = date.today().isoformat()
+    cache_key = f"ai_comment:{ticker}:{today}"
+
+    cached = await cache_get_json(cache_key)
+    if cached is not None:
+        return cached
+
+    # Build fallback from summary lines
+    summary_lines = score_result.get("summary", [])
+    fallback = {
+        "comment": " ".join(summary_lines) if summary_lines else "",
+        "highlights": summary_lines[:3] if summary_lines else [],
+    }
+
+    if not settings.openai_api_key:
+        return fallback
+
+    # Build prompt
+    indicators = score_result.get("indicators", {})
+    trend = indicators.get("trend", {})
+    confidence = score_result.get("confidence", {})
+    conf_final = confidence.get("final", 0) if isinstance(confidence, dict) else confidence
+
+    prompt = f"""당신은 한국어 주식 분석 코멘터입니다. 아래 기술적 분석 결과를 바탕으로 투자자에게 도움이 되는 자연어 코멘트를 작성하세요.
+
+종목: {ticker}
+신호: {score_result.get('signal', 'HOLD')}
+등급: {score_result.get('grade', 'C')}
+신뢰도: {conf_final:.0f}%
+RSI: {indicators.get('rsi', 50):.1f}
+추세: {trend.get('direction', 'sideways')} (강도 {trend.get('strength', 0)*100:.0f}%)
+ATR: {indicators.get('atr_pct', 0):.1f}%
+목표가: {score_result.get('target', {}).get('consensus', '-')}
+손절가: {score_result.get('stop_loss', {}).get('final', '-')}
+R:R 비율: {score_result.get('risk_reward_ratio', '-')}
+
+기존 분석 요약:
+{chr(10).join(f'- {s}' for s in summary_lines)}
+
+JSON으로 응답하세요:
+{{"comment": "투자자를 위한 2-3문장 자연어 코멘트", "highlights": ["핵심 포인트1", "핵심 포인트2", "핵심 포인트3"]}}"""
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {settings.openai_api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": settings.llm_model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "response_format": {"type": "json_object"},
+                    "max_tokens": 300,
+                    "temperature": 0.7,
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            content = data["choices"][0]["message"]["content"]
+            result = json.loads(content)
+            await cache_set_json(cache_key, result, ttl=3600)
+            return result
+    except Exception as e:
+        logger.warning(f"AI comment generation failed for {ticker}: {e}")
+        return fallback
+
+
 @router.get("/{ticker}/score")
 async def get_score(
     ticker: str,
@@ -252,6 +326,12 @@ async def get_score(
     cache_key = f"score:{ticker}:{market}"
     cached = await cache_get_json(cache_key)
     if cached is not None:
+        # Add AI comment (may be cached separately)
+        if "ai_comment" not in cached:
+            try:
+                cached["ai_comment"] = await _generate_ai_comment(cached)
+            except Exception:
+                cached["ai_comment"] = None
         return JSONResponse(content={"success": True, "data": cached}, headers=rl_headers)
 
     try:
@@ -261,7 +341,15 @@ async def get_score(
                 return {"success": False, "message": f"No data available for {ticker}"}
             fundamentals = await asyncio.to_thread(_get_fundamentals, ticker, market)
         result = _sanitize(ScoringEngine(df, fundamentals=fundamentals).compute())
+        result["ticker"] = ticker
         await cache_set_json(cache_key, result, ttl=600)
+
+        # Generate AI comment
+        try:
+            result["ai_comment"] = await _generate_ai_comment(result)
+        except Exception:
+            result["ai_comment"] = None
+
         return JSONResponse(content={"success": True, "data": result}, headers=rl_headers)
     except Exception as e:
         logger.error(f"Scoring failed for {ticker}: {e}")
@@ -440,3 +528,149 @@ async def get_volume_analysis(
         return {"success": False, "message": "No data"}
     result = _sanitize(VolumeAnalyzer(df).get_signal())
     return {"success": True, "data": result}
+
+
+# --- Compare Report ---
+
+
+class CompareReportRequest(BaseModel):
+    tickers: list[str] = Field(..., min_length=2, max_length=4)
+    markets: list[str] = Field(..., min_length=2, max_length=4)
+
+
+@router.post("/compare-report")
+async def compare_report(
+    req: CompareReportRequest,
+    user: UserModel = Depends(get_current_user),
+):
+    """Generate AI comparison report for 2-4 stocks."""
+    from datetime import timedelta, timezone
+
+    if len(req.tickers) != len(req.markets):
+        raise HTTPException(status_code=400, detail="tickers와 markets 길이가 다릅니다.")
+
+    # Rate limit: 5/day per user
+    redis = None
+    try:
+        redis = await _get_redis()
+    except Exception:
+        pass
+
+    now_kst = date.today().isoformat()
+    limit_key = f"compare_report:{user.id}:{now_kst}"
+
+    if redis:
+        count = await redis.get(limit_key)
+        used = int(count) if count else 0
+        if used >= 5:
+            raise HTTPException(status_code=429, detail="일일 비교 리포트 생성 횟수(5회)를 초과했습니다.")
+
+    # Check cache
+    sorted_tickers = "_".join(sorted(req.tickers))
+    cache_key = f"compare_report:{sorted_tickers}:{now_kst}"
+    cached = await cache_get_json(cache_key)
+    if cached is not None:
+        return {"success": True, "data": cached, "cached": True}
+
+    # Analyze each stock in parallel
+    async def _analyze_one(ticker: str, market: str) -> dict:
+        async with _api_semaphore:
+            df = await asyncio.to_thread(_get_ohlcv_with_fallback, ticker, market)
+            fundamentals = await asyncio.to_thread(_get_fundamentals, ticker, market)
+            if df.empty:
+                return {"ticker": ticker, "error": "데이터 없음"}
+            score = _sanitize(ScoringEngine(df, fundamentals=fundamentals).compute())
+            score["ticker"] = ticker
+            score["name"] = fundamentals.get("shortName") or ticker
+            score["market"] = market
+            return score
+
+    tasks = [_analyze_one(t, m) for t, m in zip(req.tickers, req.markets)]
+    analyses = await asyncio.gather(*tasks, return_exceptions=True)
+
+    # Build prompt
+    stock_sections = []
+    for a in analyses:
+        if isinstance(a, Exception) or a.get("error"):
+            continue
+        indicators = a.get("indicators", {})
+        trend = indicators.get("trend", {})
+        conf = a.get("confidence", {})
+        conf_final = conf.get("final", 0) if isinstance(conf, dict) else conf
+        summary_lines = a.get("summary", [])
+
+        stock_sections.append(
+            f"- {a.get('name', a['ticker'])}({a['ticker']}): "
+            f"등급 {a.get('grade', 'N/A')}, 신호 {a.get('signal', 'HOLD')}, "
+            f"신뢰도 {conf_final:.0f}%\n"
+            f"  RSI {indicators.get('rsi', 50):.1f}, "
+            f"추세 {trend.get('direction', 'sideways')}(강도 {trend.get('strength', 0)*100:.0f}%), "
+            f"ATR {indicators.get('atr_pct', 0):.1f}%\n"
+            f"  목표가 {a.get('target', {}).get('consensus', '-')}, "
+            f"손절가 {a.get('stop_loss', {}).get('final', '-')}, "
+            f"R:R {a.get('risk_reward_ratio', '-')}\n"
+            f"  요약: {'; '.join(summary_lines[:3])}"
+        )
+
+    if not stock_sections:
+        return {"success": False, "message": "분석 가능한 종목이 없습니다."}
+
+    n = len(stock_sections)
+    tickers_str = ", ".join(req.tickers)
+
+    prompt = f"""당신은 주식 투자 비교 전문가입니다. 아래 {n}개 종목의 기술적 분석 결과를 비교하세요.
+
+각 종목 정보:
+{chr(10).join(stock_sections)}
+
+JSON 응답:
+{{
+  "overall": "전체 비교 요약 (3-4문장)",
+  "best_pick": {{"ticker": "최적 종목 티커", "reason": "추천 이유 (2문장)"}},
+  "comparison": {{{', '.join(f'"{t}": "종목별 강점/약점 (2문장)"' for t in req.tickers)}}},
+  "risk_comparison": "상대 리스크 비교 (2문장)",
+  "timing": "진입 타이밍 제안 (1-2문장)"
+}}"""
+
+    # Default fallback
+    report = {
+        "overall": "AI 분석을 사용할 수 없습니다.",
+        "best_pick": {"ticker": req.tickers[0], "reason": ""},
+        "comparison": {t: "" for t in req.tickers},
+        "risk_comparison": "",
+        "timing": "",
+    }
+
+    if settings.openai_api_key:
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {settings.openai_api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": settings.llm_model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "response_format": {"type": "json_object"},
+                        "max_tokens": 600,
+                        "temperature": 0.7,
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                content = data["choices"][0]["message"]["content"]
+                report = json.loads(content)
+        except Exception as e:
+            logger.warning(f"Compare report LLM call failed: {e}")
+
+    # Cache result
+    await cache_set_json(cache_key, report, ttl=1800)
+
+    # Increment rate limit
+    if redis:
+        await redis.incr(limit_key)
+        await redis.expire(limit_key, 86400)
+
+    return {"success": True, "data": report, "cached": False}

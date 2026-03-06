@@ -565,6 +565,34 @@ function SearchPage() {
             </div>
           )}
 
+          {/* ====== AI Comment ====== */}
+          {sc?.ai_comment && (sc.ai_comment.comment || sc.ai_comment.highlights?.length > 0) && (
+            <div className="bg-gradient-to-r from-blue-600/10 to-purple-600/10 border border-blue-500/20 rounded-lg p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-400">
+                  <path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z" />
+                  <line x1="10" y1="22" x2="14" y2="22" />
+                </svg>
+                <h2 className="text-lg font-semibold text-blue-400">AI 분석 코멘트</h2>
+              </div>
+              {sc.ai_comment.comment && (
+                <p className="text-sm leading-relaxed mb-3">{sc.ai_comment.comment}</p>
+              )}
+              {sc.ai_comment.highlights && sc.ai_comment.highlights.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {sc.ai_comment.highlights.map((h: string, i: number) => (
+                    <span
+                      key={i}
+                      className="text-xs px-2.5 py-1 rounded-full bg-blue-500/15 text-blue-300 border border-blue-500/20"
+                    >
+                      {h}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* ====== Analysis Summary ====== */}
           {sc?.summary && sc.summary.length > 0 && (
             <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-5">

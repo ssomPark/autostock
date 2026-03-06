@@ -7,7 +7,9 @@ import { useAuth } from "@/lib/auth-context";
 import {
   searchStocks,
   fetchScore,
+  generateCompareReport,
   type StockSearchResult,
+  type CompareReport,
 } from "@/lib/api";
 
 /* ------------------------------------------------------------------ */
@@ -144,6 +146,42 @@ export default function ComparePage() {
   const removeStock = (ticker: string, market: string) => {
     setSelected((prev) => prev.filter((s) => !(s.ticker === ticker && s.market === market)));
   };
+
+  /* ---- AI Compare Report state ---- */
+  const [aiReport, setAiReport] = useState<CompareReport | null>(null);
+  const [aiReportLoading, setAiReportLoading] = useState(false);
+  const [aiReportError, setAiReportError] = useState<string | null>(null);
+
+  const handleGenerateReport = async () => {
+    setAiReportLoading(true);
+    setAiReportError(null);
+    try {
+      const tickers = selected.map((s) => s.ticker);
+      const markets = selected.map((s) => s.market);
+      const res = await generateCompareReport(tickers, markets);
+      if (res.success && res.data) {
+        setAiReport(res.data);
+      } else {
+        setAiReportError("리포트 생성에 실패했습니다.");
+      }
+    } catch (err: any) {
+      if (err?.status === 429 || err?.message?.includes("429")) {
+        setAiReportError("일일 비교 리포트 생성 횟수(5회)를 초과했습니다.");
+      } else if (err?.status === 401 || err?.message?.includes("401")) {
+        setAiReportError("로그인이 필요합니다.");
+      } else {
+        setAiReportError("리포트 생성 중 오류가 발생했습니다.");
+      }
+    } finally {
+      setAiReportLoading(false);
+    }
+  };
+
+  // Reset report when selection changes
+  useEffect(() => {
+    setAiReport(null);
+    setAiReportError(null);
+  }, [selected.length]);
 
   /* ---- Fetch scores in parallel ---- */
   const scoreQueries = useQueries({
@@ -725,6 +763,114 @@ export default function ComparePage() {
               </CompareRow>
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* AI Compare Report */}
+      {allLoaded && selected.length >= 2 && (
+        <div className="space-y-4">
+          {/* Generate button */}
+          {!aiReport && (
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleGenerateReport}
+                disabled={aiReportLoading}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 text-white text-sm font-medium transition-all disabled:opacity-50"
+              >
+                {aiReportLoading ? (
+                  <>
+                    <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    AI 분석 중...
+                  </>
+                ) : (
+                  <>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z" />
+                      <line x1="10" y1="22" x2="14" y2="22" />
+                    </svg>
+                    AI 비교 분석
+                  </>
+                )}
+              </button>
+              {aiReportError && (
+                <span className="text-sm text-red-400">{aiReportError}</span>
+              )}
+            </div>
+          )}
+
+          {/* Report result */}
+          {aiReport && (
+            <div className="bg-gradient-to-r from-blue-600/10 to-purple-600/10 border border-blue-500/20 rounded-lg p-5 space-y-5">
+              <div className="flex items-center gap-2">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-400">
+                  <path d="M12 2a7 7 0 0 1 7 7c0 2.38-1.19 4.47-3 5.74V17a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2v-2.26C6.19 13.47 5 11.38 5 9a7 7 0 0 1 7-7z" />
+                  <line x1="10" y1="22" x2="14" y2="22" />
+                </svg>
+                <h3 className="text-lg font-semibold text-blue-400">AI 비교 분석 리포트</h3>
+              </div>
+
+              {/* Overall */}
+              {aiReport.overall && (
+                <div>
+                  <h4 className="text-sm font-medium text-[var(--muted)] mb-2">종합 비교</h4>
+                  <p className="text-sm leading-relaxed">{aiReport.overall}</p>
+                </div>
+              )}
+
+              {/* Best pick */}
+              {aiReport.best_pick?.ticker && (
+                <div className="bg-green-500/10 border border-green-500/20 rounded-lg p-4">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="px-2 py-0.5 bg-green-500/20 text-green-400 text-xs font-bold rounded">BEST PICK</span>
+                    <span className="font-semibold">{aiReport.best_pick.ticker}</span>
+                  </div>
+                  <p className="text-sm leading-relaxed">{aiReport.best_pick.reason}</p>
+                </div>
+              )}
+
+              {/* Per-stock comparison */}
+              {aiReport.comparison && Object.keys(aiReport.comparison).length > 0 && (
+                <div>
+                  <h4 className="text-sm font-medium text-[var(--muted)] mb-2">종목별 분석</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {Object.entries(aiReport.comparison).map(([ticker, comment]) => {
+                      const s = selected.find((sel) => sel.ticker === ticker);
+                      const c = s ? TAG_COLORS[s.colorIdx] : TAG_COLORS[0];
+                      return (
+                        <div
+                          key={ticker}
+                          className="rounded-lg p-3 text-sm"
+                          style={{ backgroundColor: c.bg, border: `1px solid ${c.border}` }}
+                        >
+                          <span className="font-medium" style={{ color: c.text }}>{ticker}</span>
+                          <p className="mt-1 leading-relaxed text-[var(--foreground)]">{comment}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Risk comparison */}
+              {aiReport.risk_comparison && (
+                <div>
+                  <h4 className="text-sm font-medium text-[var(--muted)] mb-2">리스크 비교</h4>
+                  <p className="text-sm leading-relaxed">{aiReport.risk_comparison}</p>
+                </div>
+              )}
+
+              {/* Timing */}
+              {aiReport.timing && (
+                <div>
+                  <h4 className="text-sm font-medium text-[var(--muted)] mb-2">진입 타이밍</h4>
+                  <p className="text-sm leading-relaxed">{aiReport.timing}</p>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 
