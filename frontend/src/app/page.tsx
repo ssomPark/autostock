@@ -10,8 +10,15 @@ import { RecommendationList } from "@/components/dashboard/recommendation-list";
 import { RecentNews } from "@/components/dashboard/recent-news";
 import { PipelineStatus } from "@/components/dashboard/pipeline-status";
 import { PinnedStocks } from "@/components/dashboard/pinned-stocks";
-import { fetchDashboardSummary, fetchPublicUpdates } from "@/lib/api";
-import type { UpdatePost } from "@/lib/api";
+import {
+  fetchDashboardSummary,
+  fetchPublicUpdates,
+  fetchNotifications,
+  fetchSectorHeatmap,
+  fetchPortfolios,
+  fetchPortfolioHoldings,
+} from "@/lib/api";
+import type { UpdatePost, SectorHeatmapItem, Notification, PortfolioHolding } from "@/lib/api";
 import { AdUnit } from "@/components/ads/ad-unit";
 
 /* ──────────────────────────── Feature Cards Data ──────────────────────────── */
@@ -302,6 +309,153 @@ function WelcomePage({ onLogin }: { onLogin: () => void }) {
   );
 }
 
+/* ──────────────────────────── Quick Widgets ──────────────────────────── */
+
+function SectorQuickView() {
+  const { data } = useQuery({
+    queryKey: ["sectorHeatmap"],
+    queryFn: fetchSectorHeatmap,
+    staleTime: 10 * 60 * 1000,
+  });
+
+  const sectors: SectorHeatmapItem[] = data?.data?.sectors ?? [];
+  if (sectors.length === 0) return null;
+
+  const top5 = [...sectors].sort((a, b) => b.total - a.total).slice(0, 5);
+
+  return (
+    <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-xl p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold flex items-center gap-1.5">
+          <span className="text-base">🗺️</span> 섹터 현황
+        </h3>
+        <Link href="/recommendations" className="text-[10px] text-blue-400 hover:text-blue-300">
+          전체 보기 →
+        </Link>
+      </div>
+      <div className="space-y-2">
+        {top5.map((s) => {
+          const buyRatio = s.total > 0 ? s.buy / s.total : 0;
+          const barColor = buyRatio > 0.5 ? "#4ade80" : buyRatio < 0.3 ? "#f87171" : "#facc15";
+          return (
+            <div key={s.name} className="flex items-center gap-2 text-xs">
+              <span className="w-16 truncate text-[var(--muted)]">{s.name_kr || s.name}</span>
+              <div className="flex-1 h-1.5 bg-[var(--surface-hover)] rounded-full overflow-hidden">
+                <div className="h-full rounded-full" style={{ width: `${buyRatio * 100}%`, backgroundColor: barColor }} />
+              </div>
+              <span className="w-6 text-right font-medium" style={{ color: barColor }}>{s.total}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function RecentNotificationsWidget() {
+  const { isAuthenticated } = useAuth();
+  const { data } = useQuery({
+    queryKey: ["dashboardNotifications"],
+    queryFn: () => fetchNotifications({ limit: 5 }),
+    enabled: isAuthenticated,
+    staleTime: 60 * 1000,
+  });
+
+  const notifications: Notification[] = data?.notifications ?? [];
+  if (notifications.length === 0) return null;
+
+  const typeIcons: Record<string, string> = {
+    recommendation: "💡", system: "🔔", price_alert: "📈", paper_trading: "💰",
+  };
+
+  return (
+    <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-xl p-4">
+      <h3 className="text-sm font-semibold mb-3 flex items-center gap-1.5">
+        <span className="text-base">🔔</span> 최근 알림
+      </h3>
+      <div className="space-y-2">
+        {notifications.map((n) => (
+          <Link
+            key={n.id}
+            href={n.link || "#"}
+            className={`flex items-start gap-2 p-2 rounded-lg transition-colors hover:bg-[var(--surface-active)] ${
+              !n.is_read ? "bg-blue-500/[0.04]" : ""
+            }`}
+          >
+            <span className="text-sm shrink-0">{typeIcons[n.type] || "🔔"}</span>
+            <div className="min-w-0 flex-1">
+              <p className={`text-xs truncate ${!n.is_read ? "font-semibold" : ""}`}>{n.title}</p>
+              {n.message && <p className="text-[10px] text-[var(--muted)] truncate mt-0.5">{n.message}</p>}
+            </div>
+            {!n.is_read && <span className="w-1.5 h-1.5 rounded-full bg-blue-500 shrink-0 mt-1.5" />}
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PortfolioQuickSummary() {
+  const { isAuthenticated } = useAuth();
+  const { data: portfolios } = useQuery({
+    queryKey: ["portfolios"],
+    queryFn: fetchPortfolios,
+    enabled: isAuthenticated,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  const firstPortfolio = portfolios?.[0];
+  const { data: holdings } = useQuery({
+    queryKey: ["portfolioHoldings", firstPortfolio?.id],
+    queryFn: () => fetchPortfolioHoldings(firstPortfolio!.id),
+    enabled: !!firstPortfolio,
+    staleTime: 5 * 60 * 1000,
+  });
+
+  if (!firstPortfolio || !holdings || holdings.length === 0) return null;
+
+  const totalInvested = holdings.reduce((s: number, h: PortfolioHolding) => s + h.invested, 0);
+  const totalEval = holdings.reduce((s: number, h: PortfolioHolding) => s + h.eval_amount, 0);
+  const totalPnl = totalEval - totalInvested;
+  const totalPnlPct = totalInvested > 0 ? (totalPnl / totalInvested) * 100 : 0;
+  const pnlColor = totalPnl > 0 ? "#4ade80" : totalPnl < 0 ? "#f87171" : "var(--muted)";
+
+  return (
+    <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-xl p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold flex items-center gap-1.5">
+          <span className="text-base">📑</span> 포트폴리오
+        </h3>
+        <Link href="/portfolio" className="text-[10px] text-blue-400 hover:text-blue-300">
+          상세 보기 →
+        </Link>
+      </div>
+      <div className="text-center py-2">
+        <p className="text-xs text-[var(--muted)] mb-1">{firstPortfolio.name} ({holdings.length}종목)</p>
+        <p className="text-xl font-bold" style={{ color: pnlColor }}>
+          {totalPnl > 0 ? "+" : ""}{totalPnlPct.toFixed(2)}%
+        </p>
+        <p className="text-xs text-[var(--muted)] mt-1">
+          평가 {totalEval.toLocaleString(undefined, { maximumFractionDigits: 0 })}원
+        </p>
+      </div>
+      <div className="mt-3 space-y-1">
+        {holdings.slice(0, 3).map((h: PortfolioHolding) => (
+          <div key={h.id} className="flex items-center justify-between text-xs">
+            <span className="truncate max-w-[120px]">{h.name}</span>
+            <span style={{ color: h.pnl >= 0 ? "#4ade80" : "#f87171" }}>
+              {h.pnl >= 0 ? "+" : ""}{h.pnl_pct.toFixed(1)}%
+            </span>
+          </div>
+        ))}
+        {holdings.length > 3 && (
+          <p className="text-[10px] text-[var(--muted)] text-center mt-1">+{holdings.length - 3}개 더</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ──────────────────────────── Dashboard (기존) ──────────────────────────── */
 
 function Dashboard() {
@@ -327,8 +481,11 @@ function Dashboard() {
         <div className="lg:col-span-2">
           <RecommendationList />
         </div>
-        <div>
+        <div className="space-y-4">
           <RecentNews />
+          <SectorQuickView />
+          <RecentNotificationsWidget />
+          <PortfolioQuickSummary />
         </div>
       </div>
       <AdUnit slot="dashboard-bottom" className="mt-6" />

@@ -11,7 +11,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from src.config.settings import settings
 from src.db.database import init_db, close_db
-from src.api.routes import recommendations, analysis, news, pipeline, websocket, n8n, auth, watchlist, saved_analysis, prices, paper_trading, fundamental, events, admin, notifications, portfolio, community
+from src.api.routes import recommendations, analysis, news, pipeline, websocket, n8n, auth, watchlist, saved_analysis, prices, paper_trading, fundamental, events, admin, notifications, portfolio, community, backtest
 
 logger = logging.getLogger(__name__)
 
@@ -111,6 +111,7 @@ app.include_router(events.router, prefix="/api/events", tags=["events"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])
 app.include_router(community.router, prefix="/api/community", tags=["community"])
+app.include_router(backtest.router, prefix="/api/backtest", tags=["backtest"])
 
 
 @app.get("/api/health")
@@ -160,7 +161,8 @@ async def get_public_navigation():
 
     default_order = [
         "/", "/search", "/my-analyses", "/recommendations",
-        "/events", "/paper-trading", "/portfolio", "/news", "/community", "/compare", "/admin",
+        "/events", "/paper-trading", "/portfolio", "/news", "/community",
+        "/fundamental", "/backtest", "/compare", "/admin",
     ]
     try:
         async for session in get_async_session():

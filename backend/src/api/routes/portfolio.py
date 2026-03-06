@@ -24,6 +24,7 @@ from src.config.settings import settings
 from src.db.database import get_async_session
 from src.models.db_models import UserModel, PortfolioModel, PortfolioHoldingModel
 from src.services.market_data_service import MarketDataService, get_usd_krw_rate
+from src.utils.api_usage_tracker import track_openai_usage
 from src.utils.redis_cache import _get_redis, cache_get_json, cache_set_json
 
 logger = logging.getLogger(__name__)
@@ -436,6 +437,8 @@ JSON 형식으로 응답하세요:
                 )
                 resp.raise_for_status()
                 data = resp.json()
+                usage = data.get("usage", {})
+                asyncio.create_task(track_openai_usage("portfolio_report", usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)))
                 content = data["choices"][0]["message"]["content"]
                 llm_comment = json.loads(content)
         except Exception as e:

@@ -26,11 +26,41 @@ from src.config.settings import settings
 from src.models.db_models import UserModel
 from src.services.market_data_service import MarketDataService
 from src.utils.rate_limiter import check_analysis_limit
+from src.utils.api_usage_tracker import track_openai_usage
+from src.utils.market_hours import is_market_open, seconds_since_market_close, seconds_until_next_open
 from src.utils.redis_cache import _get_redis, cache_get_json, cache_set_json
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# --- Smart TTL for market-aware caching ---
+
+_SETTLEMENT_BUFFER = {"KR": 600, "US": 900}  # KR 10분, US 15분
+_MAX_TTL = 259200  # 72시간 (3일 연휴 커버)
+
+
+def _market_to_type(market: str) -> str:
+    return "KR" if market.upper() in ("KOSPI", "KOSDAQ", "KR") else "US"
+
+
+def _smart_ttl(market: str, default_ttl: int) -> int:
+    """Return cache TTL based on market hours. Long TTL when market is closed."""
+    mtype = _market_to_type(market)
+
+    if is_market_open(mtype):
+        return default_ttl
+
+    since_close = seconds_since_market_close(mtype)
+    buffer = _SETTLEMENT_BUFFER[mtype]
+    if 0 < since_close < buffer:
+        return min(default_ttl, 60)
+
+    until_open = seconds_until_next_open(mtype)
+    if until_open > 0:
+        return min(until_open, _MAX_TTL)
+
+    return default_ttl
 market_service = MarketDataService()
 
 # Limit concurrent external API calls (yfinance, KIS) to prevent overwhelming upstream services
@@ -160,7 +190,7 @@ async def get_financials(
         async with _api_semaphore:
             result = await asyncio.to_thread(_fetch_financials_sync, ticker, market)
         sanitized = _sanitize(result)
-        await cache_set_json(cache_key, sanitized, ttl=3600)
+        await cache_set_json(cache_key, sanitized, ttl=_smart_ttl(market, 3600))
         return JSONResponse(content={"success": True, "data": sanitized}, headers=rl_headers)
 
     except Exception as e:
@@ -238,7 +268,7 @@ def _fetch_financials_sync(ticker: str, market: str) -> dict:
     }
 
 
-async def _generate_ai_comment(score_result: dict) -> dict:
+async def _generate_ai_comment(score_result: dict, market: str = "KOSPI") -> dict:
     """Generate an AI comment from score data using LLM, with Redis caching."""
     ticker = score_result.get("ticker", "")
     today = date.today().isoformat()
@@ -301,9 +331,11 @@ JSON으로 응답하세요:
             )
             resp.raise_for_status()
             data = resp.json()
+            usage = data.get("usage", {})
+            asyncio.create_task(track_openai_usage("ai_comment", usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)))
             content = data["choices"][0]["message"]["content"]
             result = json.loads(content)
-            await cache_set_json(cache_key, result, ttl=3600)
+            await cache_set_json(cache_key, result, ttl=_smart_ttl(market, 3600))
             return result
     except Exception as e:
         logger.warning(f"AI comment generation failed for {ticker}: {e}")
@@ -329,7 +361,7 @@ async def get_score(
         # Add AI comment (may be cached separately)
         if "ai_comment" not in cached:
             try:
-                cached["ai_comment"] = await _generate_ai_comment(cached)
+                cached["ai_comment"] = await _generate_ai_comment(cached, market=market)
             except Exception:
                 cached["ai_comment"] = None
         return JSONResponse(content={"success": True, "data": cached}, headers=rl_headers)
@@ -342,11 +374,11 @@ async def get_score(
             fundamentals = await asyncio.to_thread(_get_fundamentals, ticker, market)
         result = _sanitize(ScoringEngine(df, fundamentals=fundamentals).compute())
         result["ticker"] = ticker
-        await cache_set_json(cache_key, result, ttl=600)
+        await cache_set_json(cache_key, result, ttl=_smart_ttl(market, 600))
 
         # Generate AI comment
         try:
-            result["ai_comment"] = await _generate_ai_comment(result)
+            result["ai_comment"] = await _generate_ai_comment(result, market=market)
         except Exception:
             result["ai_comment"] = None
 
@@ -474,7 +506,7 @@ async def get_ohlcv(
         })
 
     records.sort(key=lambda x: x["time"])
-    await cache_set_json(cache_key, records, ttl=900)
+    await cache_set_json(cache_key, records, ttl=_smart_ttl(market, 900))
     return JSONResponse(content={"success": True, "data": records}, headers=rl_headers)
 
 
@@ -660,13 +692,15 @@ JSON 응답:
                 )
                 resp.raise_for_status()
                 data = resp.json()
+                usage = data.get("usage", {})
+                asyncio.create_task(track_openai_usage("compare_report", usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)))
                 content = data["choices"][0]["message"]["content"]
                 report = json.loads(content)
         except Exception as e:
             logger.warning(f"Compare report LLM call failed: {e}")
 
     # Cache result
-    await cache_set_json(cache_key, report, ttl=1800)
+    await cache_set_json(cache_key, report, ttl=_smart_ttl(req.markets[0], 1800))
 
     # Increment rate limit
     if redis:

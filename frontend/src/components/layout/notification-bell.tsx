@@ -12,10 +12,11 @@ import {
   type Notification,
 } from "@/lib/api";
 
-const TYPE_ICONS: Record<string, string> = {
-  recommendation: "💡",
-  system: "🔔",
-  price_alert: "📈",
+const TYPE_CONFIG: Record<string, { icon: string; label: string; color: string }> = {
+  recommendation: { icon: "💡", label: "추천", color: "text-yellow-500" },
+  system: { icon: "🔔", label: "시스템", color: "text-blue-400" },
+  price_alert: { icon: "📈", label: "가격", color: "text-green-500" },
+  paper_trading: { icon: "💰", label: "모의투자", color: "text-purple-400" },
 };
 
 function timeAgo(dateStr: string | null): string {
@@ -189,12 +190,19 @@ export function NotificationBell() {
       {open && (
         <div
           ref={panelRef}
-          className="fixed w-80 max-h-[420px] bg-[var(--card)] border border-[var(--card-border)] rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden"
+          className="fixed w-80 max-h-[420px] bg-[var(--card)] border border-[var(--card-border)] rounded-xl shadow-2xl z-50 flex flex-col overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200"
           style={popupStyle}
         >
           {/* Header */}
           <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--card-border)]">
-            <h3 className="text-sm font-semibold">알림</h3>
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-semibold">알림</h3>
+              {unreadCount > 0 && (
+                <span className="text-[10px] font-medium bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded-full">
+                  {unreadCount}
+                </span>
+              )}
+            </div>
             {unreadCount > 0 && (
               <button
                 onClick={handleMarkAllRead}
@@ -208,34 +216,63 @@ export function NotificationBell() {
           {/* Notifications list */}
           <div className="flex-1 overflow-y-auto">
             {loading ? (
-              <div className="p-6 text-center text-[var(--muted)] text-sm">로딩 중...</div>
+              <div className="p-6 space-y-3">
+                {[...Array(3)].map((_, i) => (
+                  <div key={i} className="flex gap-2.5 animate-pulse">
+                    <div className="w-8 h-8 rounded-full bg-[var(--surface-active)]" />
+                    <div className="flex-1 space-y-2">
+                      <div className="h-3 bg-[var(--surface-active)] rounded w-3/4" />
+                      <div className="h-2.5 bg-[var(--surface-active)] rounded w-1/2" />
+                    </div>
+                  </div>
+                ))}
+              </div>
             ) : notifications.length === 0 ? (
-              <div className="p-6 text-center">
-                <div className="text-3xl mb-2">🔔</div>
+              <div className="p-8 text-center">
+                <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-[var(--surface-active)] flex items-center justify-center">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="1.5">
+                    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                    <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                  </svg>
+                </div>
                 <p className="text-sm text-[var(--muted)]">알림이 없습니다</p>
+                <p className="text-xs text-[var(--muted)] mt-1 opacity-60">새로운 추천이나 알림이 여기에 표시됩니다</p>
               </div>
             ) : (
-              notifications.map((n) => (
-                <div
-                  key={n.id}
-                  onClick={() => handleClick(n)}
-                  className={`px-4 py-3 border-b border-[var(--card-border)] cursor-pointer hover:bg-white/[0.03] transition-colors ${
-                    !n.is_read ? "bg-blue-600/5" : ""
-                  }`}
-                >
-                  <div className="flex items-start gap-2.5">
-                    <span className="text-base mt-0.5 shrink-0">
-                      {TYPE_ICONS[n.type] || "🔔"}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className={`text-sm truncate ${!n.is_read ? "font-semibold" : ""}`}>
+              notifications.map((n) => {
+                const cfg = TYPE_CONFIG[n.type] || TYPE_CONFIG.system;
+                return (
+                  <div
+                    key={n.id}
+                    onClick={() => handleClick(n)}
+                    className={`group relative px-4 py-3 border-b border-[var(--card-border)] cursor-pointer transition-colors ${
+                      !n.is_read
+                        ? "bg-blue-500/[0.06] hover:bg-blue-500/[0.1] border-l-2 border-l-blue-500"
+                        : "hover:bg-[var(--surface-active)] border-l-2 border-l-transparent"
+                    }`}
+                  >
+                    <div className="flex items-start gap-2.5">
+                      <span className="text-base mt-0.5 shrink-0">{cfg.icon}</span>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5 mb-0.5">
+                          <span className={`text-[10px] font-medium ${cfg.color} opacity-80`}>{cfg.label}</span>
+                          <span className="text-[10px] text-[var(--muted)] opacity-50">·</span>
+                          <span className="text-[10px] text-[var(--muted)] opacity-50">{timeAgo(n.created_at)}</span>
+                        </div>
+                        <p className={`text-sm leading-snug ${!n.is_read ? "font-semibold text-[var(--foreground)]" : "text-[var(--foreground)]"}`}>
                           {n.title}
                         </p>
+                        {n.message && (
+                          <p className="text-xs text-[var(--muted)] mt-0.5 line-clamp-2 leading-relaxed">{n.message}</p>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0 mt-0.5">
+                        {!n.is_read && (
+                          <span className="w-2 h-2 rounded-full bg-blue-500" />
+                        )}
                         <button
                           onClick={(e) => handleDelete(n.id, e)}
-                          className="shrink-0 p-0.5 rounded hover:bg-[var(--surface-active)] text-[var(--muted)] hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
-                          style={{ opacity: 1 }}
+                          className="p-1 rounded hover:bg-red-500/10 text-[var(--muted)] hover:text-red-400 transition-all opacity-0 group-hover:opacity-100"
                           title="삭제"
                         >
                           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -244,17 +281,10 @@ export function NotificationBell() {
                           </svg>
                         </button>
                       </div>
-                      {n.message && (
-                        <p className="text-xs text-[var(--muted)] mt-0.5 line-clamp-2">{n.message}</p>
-                      )}
-                      <p className="text-[10px] text-[var(--muted)] mt-1">{timeAgo(n.created_at)}</p>
                     </div>
-                    {!n.is_read && (
-                      <span className="w-2 h-2 rounded-full bg-blue-500 shrink-0 mt-1.5" />
-                    )}
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         </div>

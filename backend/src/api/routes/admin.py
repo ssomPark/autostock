@@ -4,6 +4,8 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 
+import asyncio
+
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -13,6 +15,7 @@ from sqlalchemy.orm import selectinload
 
 from src.auth.dependencies import get_admin_user
 from src.config.settings import settings
+from src.utils.api_usage_tracker import track_openai_usage, get_openai_usage, get_kis_usage
 from src.db.database import get_async_session
 from src.models.db_models import (
     AdRewardLogModel,
@@ -614,6 +617,8 @@ async def auto_generate_events(
 
     try:
         data = resp.json()
+        usage = data.get("usage", {})
+        asyncio.create_task(track_openai_usage("event_generate", usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)))
         content = data["choices"][0]["message"]["content"]
         parsed = json.loads(content)
         events_data = parsed.get("events", [])
@@ -958,11 +963,79 @@ async def trigger_snapshot(
     return {"ok": True, "snapshot": {k: str(v) if isinstance(v, datetime) else v for k, v in data.items()}}
 
 
+_PAGE_LABELS: dict[str, str] = {
+    "/api/analysis/search": "종목 검색",
+    "/api/analysis/*": "종목 분석 (전체)",
+    "/api/analysis/*/score": "종합 점수",
+    "/api/analysis/*/ohlcv": "OHLCV 차트",
+    "/api/analysis/*/financials": "재무 데이터",
+    "/api/analysis/*/candlestick": "캔들스틱 분석",
+    "/api/analysis/*/chart-pattern": "차트 패턴",
+    "/api/analysis/*/support-resistance": "지지/저항선",
+    "/api/analysis/*/volume": "거래량 분석",
+    "/api/analysis/compare-report": "비교 리포트",
+    "/api/recommendations": "투자 추천",
+    "/api/recommendations/summary/dashboard": "대시보드 요약",
+    "/api/recommendations/sector-heatmap": "섹터 히트맵",
+    "/api/news": "뉴스",
+    "/api/events": "이벤트",
+    "/api/events/*": "이벤트 상세",
+    "/api/pipeline/status": "파이프라인 상태",
+    "/api/pipeline/history": "파이프라인 이력",
+    "/api/pipeline/stream": "파이프라인 스트림",
+    "/api/community/posts": "게시판 목록",
+    "/api/community/posts/*": "게시글 상세",
+    "/api/community/posts/*/comments": "댓글",
+    "/api/paper/accounts": "모의투자 계좌",
+    "/api/paper/accounts/*": "계좌 관리",
+    "/api/paper/positions/*": "보유 포지션",
+    "/api/paper/trades/*": "거래 내역",
+    "/api/paper/summary/*": "투자 요약",
+    "/api/paper/orders/*": "주문",
+    "/api/paper/buy": "매수",
+    "/api/paper/sell": "매도",
+    "/api/paper/leaderboard": "리더보드",
+    "/api/paper/exchange-rate": "환율",
+    "/api/paper/deposit": "입금",
+    "/api/paper/ad-reward/status": "광고 보상 상태",
+    "/api/paper/ad-reward/request": "광고 보상 요청",
+    "/api/paper/ad-reward/claim": "광고 보상 수령",
+    "/api/portfolio": "포트폴리오",
+    "/api/portfolio/*": "포트폴리오 상세",
+    "/api/portfolio/*/holdings": "보유 종목",
+    "/api/portfolio/*/report": "포트폴리오 리포트",
+    "/api/portfolio/enrich-holdings": "보유종목 평가",
+    "/api/portfolio/report-adhoc": "임시 리포트",
+    "/api/portfolio/report-limit": "리포트 한도",
+    "/api/saved-analyses": "분석 기록",
+    "/api/saved-analyses/*": "분석 상세",
+    "/api/saved-analyses/pinned": "핀 고정",
+    "/api/saved-analyses/stats": "분석 통계",
+    "/api/saved-analyses/performance": "분석 성과",
+    "/api/saved-analyses/*/pin": "핀 토글",
+    "/api/saved-analyses/*/memo": "메모",
+    "/api/saved-analyses/history/*": "분석 이력",
+    "/api/saved-analyses/bulk-delete": "일괄 삭제",
+    "/api/auth/me": "내 정보",
+    "/api/auth/refresh": "토큰 갱신",
+    "/api/auth/logout": "로그아웃",
+    "/api/notifications": "알림",
+    "/api/notifications/*": "알림 관리",
+    "/api/notifications/unread-count": "읽지 않은 알림",
+    "/api/notifications/read-all": "전체 읽음",
+    "/api/navigation": "메뉴 순서",
+    "/api/updates": "업데이트 목록",
+    "/api/prices/*": "실시간 가격",
+    "/api/n8n/*": "N8N 파이프라인",
+    "/api/watchlist": "워치리스트",
+}
+
+
 @router.get("/visitors/top-pages")
 async def visitors_top_pages(
     _=Depends(get_admin_user),
 ):
-    """오늘 인기 페이지 TOP 10 (Redis HASH에서 조회)."""
+    """오늘 인기 페이지 TOP 10 (Redis HASH에서 조회, 한국어 라벨 포함)."""
     try:
         from src.utils.redis_cache import _get_redis
         r = await _get_redis()
@@ -970,7 +1043,16 @@ async def visitors_top_pages(
         today_str = now_kst.strftime("%Y-%m-%d")
         paths = await r.hgetall(f"visitors:{today_str}:paths")
         sorted_paths = sorted(paths.items(), key=lambda x: int(x[1]), reverse=True)[:10]
-        return {"pages": [{"path": p, "count": int(c)} for p, c in sorted_paths]}
+        return {
+            "pages": [
+                {
+                    "path": p,
+                    "label": _PAGE_LABELS.get(p, p),
+                    "count": int(c),
+                }
+                for p, c in sorted_paths
+            ]
+        }
     except Exception as e:
         logger.debug(f"Redis top-pages failed: {e}")
         return {"pages": []}
@@ -1200,29 +1282,56 @@ async def get_metrics(
         snap_date = snap.date.date() if isinstance(snap.date, datetime) else snap.date
         snapshot_map[snap_date] = snap
 
+    # Fetch today's realtime visitor data from Redis (snapshot may not exist yet)
+    today_realtime_pv = 0
+    today_realtime_visitors = 0
+    today_realtime_visitors_anon = 0
+    try:
+        from src.utils.redis_cache import _get_redis as _get_redis_cache
+        r_rt = await _get_redis_cache()
+        today_str_rt = now_kst.strftime("%Y-%m-%d")
+        today_realtime_pv = int(await r_rt.get(f"visitors:{today_str_rt}:pv") or 0)
+        today_realtime_visitors = await r_rt.scard(f"visitors:{today_str_rt}:all") or 0
+        today_realtime_visitors_anon = await r_rt.scard(f"visitors:{today_str_rt}:anon") or 0
+    except Exception:
+        pass
+
+    today_date = today_start.date() if isinstance(today_start, datetime) else today_start
+
     # Build daily array
     daily = []
     for d in date_range:
         day_date = d.date() if isinstance(d, datetime) else d
         snap = snapshot_map.get(day_date)
+
+        # For today: use realtime Redis data; for past: use snapshot
+        if day_date == today_date:
+            pv = today_realtime_pv
+            uv = today_realtime_visitors
+            uv_anon = today_realtime_visitors_anon
+        else:
+            pv = getattr(snap, "page_views", 0) or 0
+            uv = getattr(snap, "unique_visitors", 0) or 0
+            uv_anon = getattr(snap, "unique_visitors_anon", 0) or 0
+
         daily.append({
             "date": d.strftime("%m-%d"),
-            "active_users": snap.active_users if snap else 0,
+            "active_users": snap.active_users if snap else (dau if day_date == today_date else 0),
             "new_users": new_users_map.get(day_date, 0),
             "analysis_count": analysis_map.get(day_date, 0),
             "trade_count": trades_map.get(day_date, 0),
             "pin_count": snap.pin_count if snap else 0,
             "anonymous_ips": snap.anonymous_ips if snap else 0,
             "pipeline_runs": pipeline_map.get(day_date, 0),
-            "page_views": getattr(snap, "page_views", 0) or 0,
-            "unique_visitors": getattr(snap, "unique_visitors", 0) or 0,
-            "unique_visitors_anon": getattr(snap, "unique_visitors_anon", 0) or 0,
+            "page_views": pv,
+            "unique_visitors": uv,
+            "unique_visitors_anon": uv_anon,
         })
 
-    # Compute avg visitors from snapshots
-    visitor_values = [getattr(s, "unique_visitors", 0) or 0 for s in snapshots if (getattr(s, "unique_visitors", 0) or 0) > 0]
+    # Compute avg visitors and total page views (including today's realtime)
+    visitor_values = [d["unique_visitors"] for d in daily if d["unique_visitors"] > 0]
     avg_visitors = round(sum(visitor_values) / len(visitor_values), 1) if visitor_values else 0
-    total_page_views = sum(getattr(s, "page_views", 0) or 0 for s in snapshots)
+    total_page_views = sum(d["page_views"] for d in daily)
 
     return {
         "period": period,
@@ -1381,3 +1490,33 @@ async def delete_update(
     await session.delete(post)
     await session.commit()
     return {"ok": True}
+
+
+# ── API Usage Monitoring ─────────────────────────────────────
+
+_PRICING = {
+    "gpt-4o-mini": {"input": 0.15, "output": 0.60},
+}
+
+
+@router.get("/api-usage")
+async def api_usage(
+    _=Depends(get_admin_user),
+    period: int = Query(7, ge=1, le=90),
+):
+    """Return OpenAI + KIS API usage stats for the given period."""
+    openai_data, kis_data = await asyncio.gather(
+        get_openai_usage(period),
+        get_kis_usage(period),
+    )
+
+    model = settings.llm_model
+    pricing = _PRICING.get(model, _PRICING["gpt-4o-mini"])
+
+    return {
+        "period": period,
+        "model": model,
+        "pricing": pricing,
+        "openai": openai_data,
+        "kis": kis_data,
+    }

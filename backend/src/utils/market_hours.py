@@ -247,6 +247,82 @@ def is_market_open(market_type: str) -> bool:
     return False
 
 
+def seconds_until_next_open(market_type: str) -> int:
+    """Return seconds until the next market open. 0 if already open."""
+    if is_market_open(market_type):
+        return 0
+
+    now_utc = datetime.now(timezone.utc)
+
+    if market_type == "KR":
+        now_local = now_utc.astimezone(_KST)
+        open_hour, open_min = 9, 0
+        tz = _KST
+    elif market_type == "US":
+        tz = _us_eastern_tz()
+        now_local = now_utc.astimezone(tz)
+        open_hour, open_min = 9, 30
+    else:
+        return 0
+
+    # Search up to 7 days ahead
+    for day_offset in range(8):
+        candidate = (now_local + timedelta(days=day_offset)).date()
+        if day_offset == 0:
+            # Today: only valid if open time is still in the future
+            open_dt = datetime(candidate.year, candidate.month, candidate.day,
+                               open_hour, open_min, tzinfo=tz)
+            if open_dt <= now_local:
+                continue
+        else:
+            open_dt = datetime(candidate.year, candidate.month, candidate.day,
+                               open_hour, open_min, tzinfo=tz)
+
+        # Skip weekends
+        if candidate.weekday() >= 5:
+            continue
+        # Skip holidays
+        if _is_holiday(market_type, candidate):
+            continue
+
+        return max(0, int((open_dt - now_local).total_seconds()))
+
+    return 604800  # fallback: 7 days
+
+
+def seconds_since_market_close(market_type: str) -> int:
+    """Return seconds since the most recent market close. 0 if market is open."""
+    if is_market_open(market_type):
+        return 0
+
+    now_utc = datetime.now(timezone.utc)
+
+    if market_type == "KR":
+        now_local = now_utc.astimezone(_KST)
+        close_hour, close_min = 15, 30
+        tz = _KST
+    elif market_type == "US":
+        tz = _us_eastern_tz()
+        now_local = now_utc.astimezone(tz)
+        close_hour, close_min = 16, 0
+    else:
+        return 0
+
+    # Check today first, then look back up to 7 days
+    for day_offset in range(8):
+        candidate = (now_local - timedelta(days=day_offset)).date()
+        if candidate.weekday() >= 5:
+            continue
+        if _is_holiday(market_type, candidate):
+            continue
+        close_dt = datetime(candidate.year, candidate.month, candidate.day,
+                            close_hour, close_min, tzinfo=tz)
+        if close_dt < now_local:
+            return max(0, int((now_local - close_dt).total_seconds()))
+
+    return 0
+
+
 def get_market_status() -> dict:
     """Return open/closed status for KR and US markets."""
     now_utc = datetime.now(timezone.utc)

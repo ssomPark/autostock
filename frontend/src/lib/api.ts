@@ -813,6 +813,10 @@ export async function fetchAdminMetrics(period: number = 7) {
   return fetchWithAuth(`/api/admin/metrics?period=${period}`);
 }
 
+export async function fetchAdminApiUsage(period: number = 7) {
+  return fetchWithAuth(`/api/admin/api-usage?period=${period}`);
+}
+
 export async function fetchAdminTopPages(): Promise<{ pages: { path: string; count: number }[] }> {
   return fetchWithAuth("/api/admin/visitors/top-pages");
 }
@@ -1191,6 +1195,118 @@ export async function enrichHoldings(holdings: {
   });
   if (!res.ok) throw new Error(`API Error: ${res.status}`);
   return res.json();
+}
+
+// --- Fundamental API ---
+
+export interface FundamentalStock {
+  ticker: string;
+  name: string;
+  market: string;
+  fundamental_score: number;
+  total_score: number;
+  category: string;
+  signals: {
+    value_score: number;
+    quality_score: number;
+    growth_score: number;
+  };
+  scores: {
+    value: number;
+    quality: number;
+    growth: number;
+  };
+  metrics: {
+    per: number | null;
+    forward_pe: number | null;
+    pbr: number | null;
+    roe: number | null;
+    debt_to_equity: number | null;
+    revenue_growth: number | null;
+    earnings_growth: number | null;
+    operating_margin: number | null;
+    dividend_yield: number | null;
+    current_ratio: number | null;
+    current_price: number | null;
+    market_cap: number | null;
+    "52w_high": number | null;
+    "52w_discount": number | null;
+  };
+}
+
+export async function fetchFundamentalResults(
+  market: string = "KR",
+  category: string = "all",
+  limit: number = 20,
+): Promise<{ success: boolean; data: FundamentalStock[]; count: number }> {
+  const qs = new URLSearchParams({ market, category, limit: String(limit) });
+  return fetchJSON(`/fundamental/results?${qs}`);
+}
+
+export async function fetchFundamentalScore(
+  ticker: string,
+  market: string = "KOSPI",
+): Promise<{ success: boolean; data: FundamentalStock }> {
+  return fetchJSON(`/fundamental/score/${ticker}?market=${market}`);
+}
+
+export async function triggerFundamentalScan(
+  market: string = "KR",
+  limit: number = 20,
+): Promise<{ success: boolean; data: unknown }> {
+  return fetchJSON(`/fundamental/scan?market=${market}&limit=${limit}`, { method: "POST" });
+}
+
+// --- Backtest API ---
+
+export interface BacktestTrade {
+  entry_date: string;
+  entry_price: number;
+  exit_date: string | null;
+  exit_price: number | null;
+  shares: number;
+  reason: string;
+  pnl: number;
+  pnl_pct: number;
+}
+
+export interface BacktestMetrics {
+  initial_capital: number;
+  final_equity: number;
+  total_return_pct: number;
+  max_drawdown_pct: number;
+  sharpe_ratio: number;
+  total_trades: number;
+  win_rate: number;
+  avg_pnl_pct: number;
+  max_win_pct: number;
+  max_loss_pct: number;
+  profit_factor: number;
+  winning_trades: number;
+  losing_trades: number;
+}
+
+export interface BacktestResult {
+  trades: BacktestTrade[];
+  equity_curve: { date: string; equity: number }[];
+  daily_signals: { date: string; signal: string; grade: string }[];
+  metrics: BacktestMetrics;
+  ticker: string;
+  market: string;
+  period: { start: string; end: string };
+}
+
+export async function runBacktest(params: {
+  ticker: string;
+  market: string;
+  start_date: string;
+  end_date: string;
+  initial_capital?: number;
+}): Promise<{ success: boolean; data: BacktestResult; cached?: boolean }> {
+  return fetchWithAuth("/api/backtest/run", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
 }
 
 export async function generateAdhocReport(holdings: {

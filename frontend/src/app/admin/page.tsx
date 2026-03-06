@@ -26,10 +26,11 @@ import {
   updateAdminUpdate,
   deleteAdminUpdate,
   fetchAdminTopPages,
+  fetchAdminApiUsage,
 } from "@/lib/api";
 import type { UpdatePost } from "@/lib/api";
 
-type Tab = "dashboard" | "metrics" | "users" | "analyses" | "paper-trading" | "events" | "updates" | "pipeline" | "navigation";
+type Tab = "dashboard" | "metrics" | "users" | "analyses" | "paper-trading" | "events" | "updates" | "pipeline" | "navigation" | "api-usage";
 
 function formatNum(n: number) {
   return n.toLocaleString("ko-KR");
@@ -200,7 +201,7 @@ function MetricsTab() {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [snapshotLoading, setSnapshotLoading] = useState(false);
-  const [topPages, setTopPages] = useState<{ path: string; count: number }[]>([]);
+  const [topPages, setTopPages] = useState<{ path: string; label?: string; count: number }[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -369,7 +370,7 @@ function MetricsTab() {
               <thead>
                 <tr className="border-b border-[var(--card-border)] text-left text-[var(--muted)]">
                   <th className="px-2 py-2 font-medium">#</th>
-                  <th className="px-2 py-2 font-medium">경로</th>
+                  <th className="px-2 py-2 font-medium">기능</th>
                   <th className="px-2 py-2 font-medium text-right">요청 수</th>
                 </tr>
               </thead>
@@ -377,7 +378,12 @@ function MetricsTab() {
                 {topPages.map((p, i) => (
                   <tr key={p.path} className="border-b border-[var(--card-border)] last:border-0">
                     <td className="px-2 py-2 text-blue-400 font-bold">{i + 1}</td>
-                    <td className="px-2 py-2 font-mono text-xs truncate max-w-[200px]">{p.path}</td>
+                    <td className="px-2 py-2">
+                      <span className="text-sm">{p.label || p.path}</span>
+                      {p.label && p.label !== p.path && (
+                        <span className="block text-[10px] text-[var(--muted)] font-mono">{p.path}</span>
+                      )}
+                    </td>
                     <td className="px-2 py-2 text-right">{formatNum(p.count)}</td>
                   </tr>
                 ))}
@@ -728,7 +734,11 @@ function EventsTab() {
   const [genMonth, setGenMonth] = useState(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`);
   const [genMarket, setGenMarket] = useState("ALL");
   const [generating, setGenerating] = useState(false);
-  const [genResult, setGenResult] = useState<{ type: "success" | "error"; msg: string } | null>(null);
+  const [genProgress, setGenProgress] = useState<{ currentMonth: number; total: number; done: number } | null>(null);
+  const [genResults, setGenResults] = useState<Array<{
+    month: number; count: number; error?: string;
+    events: Array<{ id: number; title: string; event_date: string; category: string; impact_level: string; stock_count: number }>;
+  }>>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -753,25 +763,33 @@ function EventsTab() {
 
   const handleAutoGenerate = async () => {
     setGenerating(true);
-    setGenResult(null);
-    try {
-      const [yearStr, monthStr] = genMonth.split("-");
-      const res = await autoGenerateEvents({
-        year: parseInt(yearStr),
-        month: parseInt(monthStr),
-        market: genMarket,
-      });
-      setGenResult({ type: "success", msg: `${res.generated_count}개 이벤트가 생성되었습니다.` });
-      load(); // 테이블 새로고침
-    } catch (err: any) {
-      const msg = err?.message?.includes("400")
-        ? "OpenAI API 키가 설정되지 않았습니다."
-        : err?.message?.includes("502")
-        ? "OpenAI API 호출에 실패했습니다."
-        : "이벤트 자동 생성에 실패했습니다.";
-      setGenResult({ type: "error", msg });
+    setGenResults([]);
+
+    const [yearStr, monthStr] = genMonth.split("-");
+    const year = parseInt(yearStr);
+    const startMonth = parseInt(monthStr);
+    const totalMonths = 12 - startMonth + 1;
+    const results: typeof genResults = [];
+
+    for (let m = startMonth; m <= 12; m++) {
+      setGenProgress({ currentMonth: m, total: totalMonths, done: m - startMonth });
+      try {
+        const res = await autoGenerateEvents({ year, month: m, market: genMarket });
+        results.push({ month: m, count: res.generated_count, events: res.events || [] });
+      } catch (err: any) {
+        const error = err?.message?.includes("400")
+          ? "API 키 오류"
+          : err?.message?.includes("502")
+          ? "OpenAI API 오류"
+          : "생성 실패";
+        results.push({ month: m, count: 0, events: [], error });
+      }
+      setGenResults([...results]);
     }
+
+    setGenProgress(null);
     setGenerating(false);
+    load();
   };
 
   const categoryColors: Record<string, string> = {
@@ -836,16 +854,61 @@ function EventsTab() {
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
               </svg>
             )}
-            {generating ? "GPT-4o로 이벤트 검색 중..." : "이벤트 자동 생성"}
+            {generating
+              ? `${genProgress?.currentMonth ?? ""}월 생성 중... (${genProgress?.done ?? 0}/${genProgress?.total ?? 0})`
+              : `${genMonth.split("-")[1]}월~12월 일괄 생성`}
           </button>
         </div>
-        {genResult && (
-          <div className={`mt-3 text-sm px-3 py-2 rounded ${
-            genResult.type === "success"
-              ? "bg-green-500/10 text-green-400 border border-green-500/20"
-              : "bg-red-500/10 text-red-400 border border-red-500/20"
-          }`}>
-            {genResult.type === "success" ? "\u2713" : "\u2717"} {genResult.msg}
+        {/* 월별 진행 결과 */}
+        {genResults.length > 0 && (
+          <div className="mt-3 space-y-2">
+            {/* 요약 바 */}
+            <div className="flex items-center gap-3 text-sm">
+              <span className="text-[var(--muted)]">
+                총 {genResults.reduce((s, r) => s + r.count, 0)}개 신규 이벤트
+                ({genResults.filter(r => r.count > 0).length}/{genResults.length}개월)
+              </span>
+              {!generating && genResults.some(r => r.error) && (
+                <span className="text-red-400 text-xs">
+                  {genResults.filter(r => r.error).length}개월 오류
+                </span>
+              )}
+            </div>
+            {/* 월별 상세 */}
+            <div className="max-h-[400px] overflow-y-auto space-y-1">
+              {genResults.map((r) => (
+                <details key={r.month} open={r.count > 0} className="group">
+                  <summary className={`flex items-center gap-2 px-3 py-1.5 rounded text-sm cursor-pointer ${
+                    r.error
+                      ? "bg-red-500/10 text-red-400"
+                      : r.count > 0
+                      ? "bg-green-500/10 text-green-400"
+                      : "bg-[var(--surface-hover)] text-[var(--muted)]"
+                  }`}>
+                    <span className="font-medium w-12">{r.month}월</span>
+                    {r.error
+                      ? <span>{r.error}</span>
+                      : <span>+{r.count}개 이벤트</span>}
+                  </summary>
+                  {r.events.length > 0 && (
+                    <div className="ml-4 mt-1 mb-2 space-y-1">
+                      {r.events.map((ev) => (
+                        <div key={ev.id} className="flex items-center gap-2 text-xs text-[var(--foreground)] px-2 py-1 rounded bg-[var(--surface-hover)]">
+                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${categoryColors[ev.category] ?? "bg-gray-500/20 text-gray-400"}`}>
+                            {ev.category}
+                          </span>
+                          <span className="text-[var(--muted)] w-20 shrink-0">{ev.event_date?.slice(5)}</span>
+                          <span className="truncate">{ev.title}</span>
+                          {ev.stock_count > 0 && (
+                            <span className="text-[var(--muted)] shrink-0">({ev.stock_count}종목)</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </details>
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -1411,6 +1474,8 @@ const NAV_ITEM_META: Record<string, { label: string; icon: string }> = {
   "/compare": { label: "종목 비교", icon: "⚖️" },
   "/portfolio": { label: "포트폴리오", icon: "📑" },
   "/community": { label: "게시판", icon: "💬" },
+  "/fundamental": { label: "펀더멘탈", icon: "📈" },
+  "/backtest": { label: "백테스팅", icon: "🔄" },
   "/admin": { label: "관리자", icon: "🛡️" },
 };
 
@@ -1725,6 +1790,156 @@ function PipelineTab() {
   );
 }
 
+// ─── API Usage Tab ──────────────────────────────────────────
+
+const FEATURE_LABELS: Record<string, string> = {
+  ai_comment: "AI 코멘트",
+  compare_report: "비교 리포트",
+  event_generate: "이벤트 생성",
+  portfolio_report: "포트폴리오 리포트",
+};
+
+const KIS_LABELS: Record<string, string> = {
+  price: "현재가",
+  ohlcv: "OHLCV",
+  token: "토큰 발급",
+};
+
+function ApiUsageTab() {
+  const [period, setPeriod] = useState(7);
+  const [data, setData] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  const load = useCallback((p: number) => {
+    setLoading(true);
+    fetchAdminApiUsage(p).then(setData).catch(() => setData(null)).finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => { load(period); }, [period, load]);
+
+  if (loading) return <LoadingSkeleton />;
+  if (!data) return <ErrorMessage msg="API 사용량 데이터를 불러올 수 없습니다." />;
+
+  const oa = data.openai || { daily: [], by_feature: {}, total: { calls: 0, input_tokens: 0, output_tokens: 0, cost_usd: 0 } };
+  const kis = data.kis || { daily: [], totals: {} };
+  const total = oa.total;
+
+  const maxFeature = Math.max(...Object.values(oa.by_feature as Record<string, any>).map((f: any) => f.calls), 1);
+  const kisValues = Object.values(kis.totals as Record<string, number>);
+  const maxKis = Math.max(...kisValues, 1);
+
+  return (
+    <div className="space-y-4">
+      {/* Period selector + model info */}
+      <div className="flex items-center justify-between">
+        <div className="flex gap-1">
+          {[7, 30, 90].map((p) => (
+            <button
+              key={p}
+              onClick={() => setPeriod(p)}
+              className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${
+                period === p
+                  ? "bg-blue-500/20 border-blue-500/50 text-blue-400"
+                  : "border-[var(--card-border)] text-[var(--muted)] hover:text-[var(--foreground)]"
+              }`}
+            >
+              {p}일
+            </button>
+          ))}
+        </div>
+        <span className="text-xs text-[var(--muted)]">
+          모델: {data.model} &middot; ${data.pricing?.input ?? 0}/1M in &middot; ${data.pricing?.output ?? 0}/1M out
+        </span>
+      </div>
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <SummaryCard icon="&#x1F4E1;" title="총 호출" value={formatNum(total.calls)} sub={`${period}일 합계`} />
+        <SummaryCard icon="&#x1F4E5;" title="입력 토큰" value={formatNum(total.input_tokens)} />
+        <SummaryCard icon="&#x1F4E4;" title="출력 토큰" value={formatNum(total.output_tokens)} />
+        <SummaryCard icon="&#x1F4B2;" title="추정 비용" value={`$${total.cost_usd.toFixed(4)}`} sub="USD" />
+      </div>
+
+      {/* Daily trend */}
+      {oa.daily && oa.daily.length > 0 && (
+        <MiniBarChart data={oa.daily} dataKey="total_calls" label="일별 OpenAI 호출 추세" color="bg-violet-500" />
+      )}
+
+      {/* Feature + KIS side by side */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* OpenAI by feature */}
+        <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4 space-y-3">
+          <p className="text-sm font-medium mb-1">기능별 OpenAI 사용량</p>
+          {Object.entries(oa.by_feature as Record<string, any>).sort((a, b) => b[1].calls - a[1].calls).map(([feat, d]: [string, any]) => (
+            <UsageBar
+              key={feat}
+              icon="&#x1F916;"
+              label={FEATURE_LABELS[feat] || feat}
+              count={d.calls}
+              max={maxFeature}
+            />
+          ))}
+          {Object.keys(oa.by_feature).length === 0 && (
+            <p className="text-sm text-[var(--muted)]">데이터 없음</p>
+          )}
+        </div>
+
+        {/* KIS usage */}
+        <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4 space-y-3">
+          <p className="text-sm font-medium mb-1">KIS API 사용량</p>
+          {Object.entries(kis.totals as Record<string, number>).sort((a, b) => b[1] - a[1]).map(([action, count]) => (
+            <UsageBar
+              key={action}
+              icon="&#x1F4C8;"
+              label={KIS_LABELS[action] || action}
+              count={count}
+              max={maxKis}
+            />
+          ))}
+          {Object.keys(kis.totals).length === 0 && (
+            <p className="text-sm text-[var(--muted)]">데이터 없음</p>
+          )}
+        </div>
+      </div>
+
+      {/* Detailed table */}
+      {Object.keys(oa.by_feature).length > 0 && (
+        <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-[var(--card-border)] text-left text-[var(--muted)]">
+                <th className="px-4 py-2">기능</th>
+                <th className="px-4 py-2 text-right">호출 수</th>
+                <th className="px-4 py-2 text-right">입력 토큰</th>
+                <th className="px-4 py-2 text-right">출력 토큰</th>
+                <th className="px-4 py-2 text-right">비용 (USD)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(oa.by_feature as Record<string, any>).sort((a, b) => b[1].calls - a[1].calls).map(([feat, d]: [string, any]) => (
+                <tr key={feat} className="border-b border-[var(--card-border)] last:border-0">
+                  <td className="px-4 py-2">{FEATURE_LABELS[feat] || feat}</td>
+                  <td className="px-4 py-2 text-right font-mono">{formatNum(d.calls)}</td>
+                  <td className="px-4 py-2 text-right font-mono">{formatNum(d.input_tokens)}</td>
+                  <td className="px-4 py-2 text-right font-mono">{formatNum(d.output_tokens)}</td>
+                  <td className="px-4 py-2 text-right font-mono">${d.cost_usd.toFixed(4)}</td>
+                </tr>
+              ))}
+              <tr className="bg-[var(--surface-hover)] font-semibold">
+                <td className="px-4 py-2">합계</td>
+                <td className="px-4 py-2 text-right font-mono">{formatNum(total.calls)}</td>
+                <td className="px-4 py-2 text-right font-mono">{formatNum(total.input_tokens)}</td>
+                <td className="px-4 py-2 text-right font-mono">{formatNum(total.output_tokens)}</td>
+                <td className="px-4 py-2 text-right font-mono">${total.cost_usd.toFixed(4)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Shared Components ──────────────────────────────────────
 function LoadingSkeleton() {
   return (
@@ -1774,6 +1989,7 @@ export default function AdminPage() {
     { key: "updates", label: "업데이트" },
     { key: "pipeline", label: "파이프라인" },
     { key: "navigation", label: "메뉴 관리" },
+    { key: "api-usage", label: "API 사용량" },
   ];
 
   return (
@@ -1810,6 +2026,7 @@ export default function AdminPage() {
       {tab === "updates" && <UpdatesTab />}
       {tab === "pipeline" && <PipelineTab />}
       {tab === "navigation" && <NavigationTab />}
+      {tab === "api-usage" && <ApiUsageTab />}
     </div>
   );
 }

@@ -15,6 +15,7 @@ from crewai.tools import BaseTool
 from pydantic import Field
 
 from src.config.settings import settings
+from src.utils.api_usage_tracker import track_kis_usage
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,7 @@ def _ensure_kis_token() -> str:
         _kis_token = data["access_token"]
         _kis_token_expires = datetime.now() + timedelta(hours=23)
         _kis_token_fail_until = None
+        track_kis_usage("token")
         logger.info("KIS OAuth token issued successfully")
         return _kis_token
 
@@ -114,6 +116,7 @@ class KoreanStockAPITool(BaseTool):
         params = {"FID_COND_MRKT_DIV_CODE": "J", "FID_INPUT_ISCD": ticker}
         resp = httpx.get(url, headers=headers, params=params, timeout=10)
         resp.raise_for_status()
+        track_kis_usage("price")
         data = resp.json().get("output", {})
         return {
             "ticker": ticker,
@@ -137,6 +140,7 @@ class KoreanStockAPITool(BaseTool):
         }
         resp = httpx.get(url, headers=headers, params=params, timeout=10)
         resp.raise_for_status()
+        track_kis_usage("ohlcv")
         items = resp.json().get("output", [])
         ohlcv = []
         for item in items:

@@ -156,6 +156,100 @@ function AnalysisDetail({ item }: { item: any }) {
   );
 }
 
+const GRADE_ORDER = ["F", "D", "C", "B", "B+", "A", "A+"];
+function gradeToNum(g: string | null): number {
+  if (!g) return 0;
+  const idx = GRADE_ORDER.indexOf(g);
+  return idx >= 0 ? idx : 0;
+}
+
+function ConfidenceTrendChart({ history }: { history: any[] }) {
+  if (history.length < 2) return null;
+
+  const items = [...history].reverse(); // oldest first
+  const W = 600, H = 160, PX = 40, PY = 20;
+  const plotW = W - PX * 2, plotH = H - PY * 2;
+
+  const confidences = items.map((d) => d.confidence ?? 50);
+  const maxC = Math.max(...confidences, 80);
+  const minC = Math.min(...confidences, 20);
+  const range = maxC - minC || 1;
+
+  const pts = items.map((d, i) => ({
+    x: PX + (items.length === 1 ? plotW / 2 : (i / (items.length - 1)) * plotW),
+    y: PY + plotH - ((d.confidence ?? 50) - minC) / range * plotH,
+    signal: d.signal,
+    grade: d.grade,
+    confidence: d.confidence,
+    date: d.analyzed_at ? new Date(d.analyzed_at).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" }) : "",
+  }));
+
+  const pathD = pts.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
+  const areaD = pathD + ` L ${pts[pts.length - 1].x} ${PY + plotH} L ${pts[0].x} ${PY + plotH} Z`;
+
+  // Y axis labels
+  const ySteps = 4;
+  const yLabels = Array.from({ length: ySteps + 1 }, (_, i) => {
+    const val = minC + (range * i) / ySteps;
+    return { val: Math.round(val), y: PY + plotH - (i / ySteps) * plotH };
+  });
+
+  return (
+    <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4">
+      <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+        </svg>
+        신뢰도 추이
+      </h3>
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ maxHeight: 200 }}>
+        {/* Grid lines */}
+        {yLabels.map((yl) => (
+          <g key={yl.val}>
+            <line x1={PX} y1={yl.y} x2={W - PX} y2={yl.y} stroke="var(--card-border)" strokeWidth="0.5" strokeDasharray="4 4" />
+            <text x={PX - 6} y={yl.y + 4} textAnchor="end" fontSize="9" fill="var(--muted)">{yl.val}%</text>
+          </g>
+        ))}
+
+        {/* Area fill */}
+        <path d={areaD} fill="url(#confidenceGradient)" />
+        <defs>
+          <linearGradient id="confidenceGradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.2" />
+            <stop offset="100%" stopColor="#3b82f6" stopOpacity="0" />
+          </linearGradient>
+        </defs>
+
+        {/* Line */}
+        <path d={pathD} fill="none" stroke="#3b82f6" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+
+        {/* Points */}
+        {pts.map((p, i) => {
+          const dotColor = p.signal === "BUY" ? "#4ade80" : p.signal === "SELL" ? "#f87171" : "#facc15";
+          return (
+            <g key={i}>
+              <circle cx={p.x} cy={p.y} r="4" fill={dotColor} stroke="var(--card)" strokeWidth="2" />
+              {/* Grade label */}
+              <text x={p.x} y={p.y - 10} textAnchor="middle" fontSize="9" fontWeight="600" fill={gradeColor[p.grade] || "#9ca3af"}>
+                {p.grade}
+              </text>
+              {/* Date label - show for first, last, and sampled points */}
+              {(i === 0 || i === pts.length - 1 || pts.length <= 6 || i % Math.ceil(pts.length / 5) === 0) && (
+                <text x={p.x} y={H - 2} textAnchor="middle" fontSize="8" fill="var(--muted)">{p.date}</text>
+              )}
+            </g>
+          );
+        })}
+      </svg>
+      <div className="flex items-center justify-center gap-4 mt-2 text-[10px] text-[var(--muted)]">
+        <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-green-400" />매수</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-yellow-400" />관망</span>
+        <span className="flex items-center gap-1"><span className="inline-block w-2 h-2 rounded-full bg-red-400" />매도</span>
+      </div>
+    </div>
+  );
+}
+
 function getChangeTag(item: any, prevItem: any | null, index: number, total: number): { label: string; color: string } | null {
   if (index === total - 1) return { label: "첫 분석", color: "#60a5fa" };
   if (!prevItem) return null;
@@ -250,6 +344,11 @@ export default function AnalysisHistoryPage() {
             <p className="text-xl font-bold">{signalChanges}회</p>
           </div>
         </div>
+      )}
+
+      {/* 신뢰도 트렌드 차트 */}
+      {!isLoading && history && history.length >= 2 && (
+        <ConfidenceTrendChart history={history} />
       )}
 
       {/* 로딩 */}

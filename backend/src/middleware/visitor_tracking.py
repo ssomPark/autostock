@@ -38,6 +38,47 @@ def _extract_user_id(request: Request) -> int | None:
     return None
 
 
+import re
+
+# Patterns to normalize dynamic path segments into readable groups
+_PATH_PATTERNS = [
+    (re.compile(r"^/api/analysis/([^/]+)/score$"), "/api/analysis/*/score"),
+    (re.compile(r"^/api/analysis/([^/]+)/ohlcv$"), "/api/analysis/*/ohlcv"),
+    (re.compile(r"^/api/analysis/([^/]+)/financials$"), "/api/analysis/*/financials"),
+    (re.compile(r"^/api/analysis/([^/]+)/candlestick$"), "/api/analysis/*/candlestick"),
+    (re.compile(r"^/api/analysis/([^/]+)/chart-pattern$"), "/api/analysis/*/chart-pattern"),
+    (re.compile(r"^/api/analysis/([^/]+)/support-resistance$"), "/api/analysis/*/support-resistance"),
+    (re.compile(r"^/api/analysis/([^/]+)/volume$"), "/api/analysis/*/volume"),
+    (re.compile(r"^/api/analysis/([^/]+)$"), "/api/analysis/*"),
+    (re.compile(r"^/api/community/posts/\d+/comments$"), "/api/community/posts/*/comments"),
+    (re.compile(r"^/api/community/posts/\d+$"), "/api/community/posts/*"),
+    (re.compile(r"^/api/events/\d+"), "/api/events/*"),
+    (re.compile(r"^/api/paper/positions/\d+$"), "/api/paper/positions/*"),
+    (re.compile(r"^/api/paper/trades/\d+$"), "/api/paper/trades/*"),
+    (re.compile(r"^/api/paper/summary/\d+$"), "/api/paper/summary/*"),
+    (re.compile(r"^/api/paper/orders/\d+$"), "/api/paper/orders/*"),
+    (re.compile(r"^/api/paper/accounts/\d+"), "/api/paper/accounts/*"),
+    (re.compile(r"^/api/portfolio/\d+/report$"), "/api/portfolio/*/report"),
+    (re.compile(r"^/api/portfolio/\d+/holdings"), "/api/portfolio/*/holdings"),
+    (re.compile(r"^/api/portfolio/\d+$"), "/api/portfolio/*"),
+    (re.compile(r"^/api/saved-analyses/history/"), "/api/saved-analyses/history/*"),
+    (re.compile(r"^/api/saved-analyses/[^/]+/pin$"), "/api/saved-analyses/*/pin"),
+    (re.compile(r"^/api/saved-analyses/[^/]+/memo$"), "/api/saved-analyses/*/memo"),
+    (re.compile(r"^/api/saved-analyses/\d+$"), "/api/saved-analyses/*"),
+    (re.compile(r"^/api/notifications/\d+"), "/api/notifications/*"),
+    (re.compile(r"^/api/n8n/"), "/api/n8n/*"),
+    (re.compile(r"^/api/prices/"), "/api/prices/*"),
+]
+
+
+def _normalize_path(path: str) -> str:
+    """Collapse dynamic path segments into * for aggregation."""
+    for pattern, replacement in _PATH_PATTERNS:
+        if pattern.match(path):
+            return replacement
+    return path
+
+
 class VisitorTrackingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # Process request first — never delay the response
@@ -88,8 +129,8 @@ async def _record_visit(ip: str, user_id: int | None, path: str):
         pipe.expire(key_pv, ttl)
 
         # Path-level counts
-        # Normalize path: strip query params, collapse IDs to {id}
-        clean_path = path.split("?")[0]
+        # Normalize: strip query params, collapse dynamic segments
+        clean_path = _normalize_path(path.split("?")[0])
         key_paths = f"visitors:{date_str}:paths"
         pipe.hincrby(key_paths, clean_path, 1)
         pipe.expire(key_paths, ttl)
