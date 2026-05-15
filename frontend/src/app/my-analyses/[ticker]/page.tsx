@@ -290,9 +290,20 @@ export default function AnalysisHistoryPage() {
   if (authLoading) return <div className="text-center py-20 text-[var(--muted)]">로딩 중...</div>;
   if (!isAuthenticated) {
     return (
-      <div className="text-center py-20 text-[var(--muted)]">
-        <p className="text-lg mb-2">로그인이 필요합니다</p>
-        <Link href="/auth/login" className="text-blue-400 hover:underline">로그인하기</Link>
+      <div className="space-y-6 max-w-4xl mx-auto text-center py-12">
+        <h1 className="text-2xl font-bold">분석 히스토리</h1>
+        <p className="text-[var(--muted)]">
+          <span className="font-semibold text-[var(--foreground)]">{ticker}</span> 종목의 과거 분석 기록을 확인하려면 로그인이 필요합니다.
+        </p>
+        <p className="text-sm text-[var(--muted)]">분석할 때마다 신호, 등급, 신뢰도가 자동 저장되어 시간 흐름에 따른 변화를 추적할 수 있습니다.</p>
+        <div className="flex justify-center gap-3">
+          <Link href="/auth/login" className="px-6 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors">
+            로그인하기
+          </Link>
+          <Link href={`/search?q=${ticker}`} className="px-6 py-2.5 rounded-lg border border-[var(--card-border)] text-[var(--muted)] hover:text-[var(--foreground)] transition-colors">
+            {ticker} 분석하기
+          </Link>
+        </div>
       </div>
     );
   }

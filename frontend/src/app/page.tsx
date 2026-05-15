@@ -456,6 +456,12 @@ function PortfolioQuickSummary() {
 /* ──────────────────────────── Dashboard ──────────────────────────── */
 
 function Dashboard() {
+  const { isFetched: sectorReady } = useQuery({
+    queryKey: ["sectorHeatmap"],
+    queryFn: fetchSectorHeatmap,
+    staleTime: 10 * 60 * 1000,
+  });
+
   return (
     <div className="space-y-6">
       <DashboardHeader />
@@ -469,7 +475,7 @@ function Dashboard() {
         <PortfolioQuickSummary />
       </div>
       <PinnedStocks />
-      <AdUnit slot="dashboard-bottom" className="mt-6" />
+      <AdUnit slot="dashboard-bottom" className="mt-6" ready={sectorReady} />
     </div>
   );
 }

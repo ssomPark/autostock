@@ -273,7 +273,13 @@ export default function RecommendationsPage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">투자 추천</h1>
+        <div>
+          <h1 className="text-2xl font-bold">투자 추천</h1>
+          <p className="text-sm text-[var(--muted)] mt-1 max-w-2xl">
+            뉴스 감성(20%), 캔들스틱(20%), 차트 패턴(25%), 지지/저항(20%), 거래량(15%)의 5가지 신호를 가중 합산하여 산출된 AI 매매 추천입니다.
+            신뢰도와 기대수익률을 참고하되, 투자 판단의 최종 책임은 본인에게 있습니다.
+          </p>
+        </div>
         <div className="flex flex-wrap items-center gap-2">
           {marketStatus && (
             <div className="flex items-center gap-3 mr-2">
@@ -407,7 +413,7 @@ export default function RecommendationsPage() {
                 : null;
               return (
                 <Fragment key={i}>
-                {showAd && <AdUnit slot="rec-infeed" format="fluid" />}
+                {showAd && <AdUnit slot="rec-infeed" format="fluid" ready={!isLoading && recs.length > 0} />}
                 <div
                   className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4"
                 >

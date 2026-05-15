@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { Sidebar } from "@/components/layout/sidebar";
+import { Footer } from "@/components/layout/footer";
 import { QueryProvider } from "@/lib/query-provider";
 import { AuthProvider } from "@/lib/auth-context";
 import { ThemeProvider } from "@/lib/theme-provider";
@@ -74,9 +75,12 @@ export default function RootLayout({
         <QueryProvider>
           <AuthProvider>
             <ThemeProvider>
-              <div className="flex flex-col lg:flex-row h-screen">
+              <div className="flex flex-col lg:flex-row min-h-screen">
                 <Sidebar />
-                <main className="flex-1 overflow-y-auto p-4 lg:p-6">{children}</main>
+                <div className="flex-1 flex flex-col overflow-y-auto">
+                  <main className="flex-1 p-4 lg:p-6">{children}</main>
+                  <Footer />
+                </div>
               </div>
             </ThemeProvider>
           </AuthProvider>

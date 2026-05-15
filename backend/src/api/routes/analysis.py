@@ -374,6 +374,22 @@ async def get_score(
             fundamentals = await asyncio.to_thread(_get_fundamentals, ticker, market)
         result = _sanitize(ScoringEngine(df, fundamentals=fundamentals).compute())
         result["ticker"] = ticker
+        result["name"] = fundamentals.get("shortName") or ticker
+        # Fetch Korean name from Naver for KR stocks
+        if market in ("KOSPI", "KOSDAQ"):
+            try:
+                async with httpx.AsyncClient() as _c:
+                    _r = await _c.get(
+                        f"https://ac.stock.naver.com/ac?q={urllib.parse.quote(ticker)}&target=stock",
+                        headers={"User-Agent": "Mozilla/5.0"},
+                        timeout=3,
+                    )
+                for _item in _r.json().get("items", []):
+                    if _item.get("code") == ticker:
+                        result["name"] = _item["name"]
+                        break
+            except Exception:
+                pass
         await cache_set_json(cache_key, result, ttl=_smart_ttl(market, 600))
 
         # Generate AI comment

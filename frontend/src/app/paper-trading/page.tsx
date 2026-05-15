@@ -29,6 +29,7 @@ import type { LeaderboardEntry, LeaderboardResponse, StockSearchResult, PaperOrd
 import { useQuery } from "@tanstack/react-query";
 import { OrderModal } from "@/components/paper-trading/order-modal";
 import { DonutChart, AssetTrendChart, PnlBarChart, MarketPieChart } from "@/components/paper-trading/portfolio-charts";
+import { useLivePrices } from "@/hooks/use-live-prices";
 
 interface Account {
   id: number;
@@ -1011,6 +1012,9 @@ function RecommendedBuyList({
   const [orderTarget, setOrderTarget] = useState<any>(null);
   const [buySuccess, setBuySuccess] = useState<string | null>(null);
 
+  // Live / closing prices from batch API
+  const { prices: livePrices, isAnyMarketOpen } = useLivePrices();
+
   useEffect(() => {
     (async () => {
       try {
@@ -1054,6 +1058,8 @@ function RecommendedBuyList({
       <div className="md:hidden space-y-2">
         {recs.map((rec: any) => {
           const owned = ownedTickers.has(rec.ticker);
+          const lp = livePrices.get(rec.ticker);
+          const displayPrice = lp ? lp.live_price : rec.current_price;
           return (
             <div
               key={rec.ticker}
@@ -1067,7 +1073,7 @@ function RecommendedBuyList({
                   <span className="text-xs text-[var(--muted)] shrink-0">({rec.ticker})</span>
                 </div>
                 <div className="flex items-center gap-3 mt-1 text-xs text-[var(--muted)]">
-                  <span>{formatPrice(rec.current_price, rec.market)}</span>
+                  <span>{formatPrice(displayPrice, rec.market)}{lp?.is_close_price && <span className="text-yellow-400 ml-0.5" title="종가">C</span>}</span>
                   <span>신뢰도 {(rec.confidence * 100).toFixed(0)}%</span>
                   {rec.target_price && (
                     <span style={{ color: "#4ade80" }}>
@@ -1077,7 +1083,7 @@ function RecommendedBuyList({
                 </div>
               </div>
               <button
-                onClick={() => setOrderTarget(rec)}
+                onClick={() => setOrderTarget({ ...rec, current_price: displayPrice })}
                 className={`ml-2 px-3 py-1.5 rounded text-xs font-medium transition-colors shrink-0 ${
                   buySuccess === rec.ticker
                     ? "bg-green-600/20 text-green-400"
@@ -1108,9 +1114,11 @@ function RecommendedBuyList({
           <tbody>
             {recs.map((rec: any) => {
               const owned = ownedTickers.has(rec.ticker);
+              const lp = livePrices.get(rec.ticker);
+              const displayPrice = lp ? lp.live_price : rec.current_price;
               const expectedPct =
-                rec.current_price > 0 && rec.target_price
-                  ? ((rec.target_price - rec.current_price) / rec.current_price) * 100
+                displayPrice > 0 && rec.target_price
+                  ? ((rec.target_price - displayPrice) / displayPrice) * 100
                   : null;
               return (
                 <tr key={rec.ticker} className="border-b border-[var(--card-border)] hover:bg-[var(--surface-hover)] text-sm">
@@ -1123,7 +1131,10 @@ function RecommendedBuyList({
                       <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-blue-600/20 text-blue-400">보유중</span>
                     )}
                   </td>
-                  <td className="p-2.5 text-right">{formatPrice(rec.current_price, rec.market)}</td>
+                  <td className="p-2.5 text-right">
+                    {formatPrice(displayPrice, rec.market)}
+                    {lp?.is_close_price && <span className="text-yellow-400 text-xs ml-0.5" title="종가">C</span>}
+                  </td>
                   <td className="p-2.5 text-right" style={{ color: "#4ade80" }}>
                     {rec.target_price ? formatPrice(rec.target_price, rec.market) : "-"}
                   </td>
@@ -1137,7 +1148,7 @@ function RecommendedBuyList({
                   <td className="p-2.5 text-right">{(rec.confidence * 100).toFixed(0)}%</td>
                   <td className="p-2.5 text-right">
                     <button
-                      onClick={() => setOrderTarget(rec)}
+                      onClick={() => setOrderTarget({ ...rec, current_price: displayPrice })}
                       className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
                         buySuccess === rec.ticker
                           ? "bg-green-600/20 text-green-400"
@@ -1478,16 +1489,36 @@ export default function PaperTradingPage() {
         {activeTab === "ranking" ? (
           <LeaderboardView />
         ) : (
-          <div className="flex flex-col items-center justify-center min-h-[40vh] gap-4">
-            <div className="text-6xl">&#x1F512;</div>
-            <h2 className="text-xl font-bold">로그인이 필요합니다</h2>
-            <p className="text-[var(--muted)] text-center">모의 투자 기능을 사용하려면 로그인하세요.</p>
-            <button
-              onClick={() => router.push("/auth/login")}
-              className="px-6 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
-            >
-              로그인하기
-            </button>
+          <div className="space-y-6">
+            <div className="flex flex-col items-center justify-center py-8 gap-4">
+              <h2 className="text-xl font-bold">가상 자금으로 실전처럼 투자 연습</h2>
+              <p className="text-[var(--muted)] text-center max-w-md">
+                실제 시장 데이터 기반으로 매수/매도를 체험하고, 수익률을 추적하세요. 리스크 없이 투자 전략을 테스트할 수 있습니다.
+              </p>
+              <button
+                onClick={() => router.push("/auth/login")}
+                className="px-6 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
+              >
+                로그인하여 시작하기
+              </button>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-5">
+                <div className="text-2xl mb-2">&#x1F4B0;</div>
+                <h3 className="font-semibold mb-1">가상 자금 운용</h3>
+                <p className="text-sm text-[var(--muted)]">원하는 초기 자금으로 여러 계좌를 만들어 다양한 전략을 테스트하세요.</p>
+              </div>
+              <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-5">
+                <div className="text-2xl mb-2">&#x1F4C9;</div>
+                <h3 className="font-semibold mb-1">실시간 손익 추적</h3>
+                <p className="text-sm text-[var(--muted)]">보유 종목의 실시간 평가 금액, 수익률, 손익을 한눈에 확인합니다.</p>
+              </div>
+              <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-5">
+                <div className="text-2xl mb-2">&#x1F3C6;</div>
+                <h3 className="font-semibold mb-1">수익률 랭킹</h3>
+                <p className="text-sm text-[var(--muted)]">다른 투자자들과 수익률을 비교하고 랭킹에 도전하세요.</p>
+              </div>
+            </div>
           </div>
         )}
       </div>
@@ -1563,10 +1594,11 @@ export default function PaperTradingPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <h1 className="text-2xl font-bold">모의 투자</h1>
-          {marketStatus && (
+      <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold">모의 투자</h1>
+            {marketStatus && (
             <div className="flex items-center gap-2 text-xs">
               <span className="inline-flex items-center gap-1">
                 <span className="inline-block w-2 h-2 rounded-full" style={{ backgroundColor: marketStatus.KR.is_open ? "#4ade80" : "#6b7280" }} />
@@ -1578,6 +1610,10 @@ export default function PaperTradingPage() {
               </span>
             </div>
           )}
+          </div>
+          <p className="text-sm text-[var(--muted)] mt-1 max-w-xl">
+            가상 자금으로 실제 시장 데이터에 기반한 매매를 연습합니다. 포지션 관리, 수익률 추적, 거래 이력을 통해 실전 감각을 익히세요. 모의 투자 수익률은 실제 투자 수익을 보장하지 않습니다.
+          </p>
         </div>
         <div className="flex items-center gap-2">
           {accounts.length > 1 && (

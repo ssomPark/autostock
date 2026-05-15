@@ -481,9 +481,36 @@ export default function MyAnalysesPage() {
   if (authLoading) return <div className="text-center py-20 text-[var(--muted)]">로딩 중...</div>;
   if (!isAuthenticated) {
     return (
-      <div className="text-center py-20 text-[var(--muted)]">
-        <p className="text-lg mb-2">로그인이 필요합니다</p>
-        <Link href="/auth/login" className="text-blue-400 hover:underline">로그인하기</Link>
+      <div className="space-y-8 max-w-4xl mx-auto">
+        <div className="text-center py-12">
+          <h1 className="text-2xl font-bold mb-3">내 분석 기록</h1>
+          <p className="text-[var(--muted)] mb-6">종목 분석 결과를 저장하고, 시간에 따른 신호 변화를 추적하세요.</p>
+          <Link href="/auth/login" className="inline-block px-6 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors">
+            로그인하여 시작하기
+          </Link>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-5">
+            <div className="text-2xl mb-2">&#x1F4CA;</div>
+            <h3 className="font-semibold mb-1">분석 저장</h3>
+            <p className="text-sm text-[var(--muted)]">종목 분석 시 자동으로 결과가 저장되어 언제든 다시 확인할 수 있습니다.</p>
+          </div>
+          <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-5">
+            <div className="text-2xl mb-2">&#x1F4C8;</div>
+            <h3 className="font-semibold mb-1">신호 추적</h3>
+            <p className="text-sm text-[var(--muted)]">BUY/SELL/HOLD 신호 변화와 신뢰도 추이를 타임라인으로 확인합니다.</p>
+          </div>
+          <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-5">
+            <div className="text-2xl mb-2">&#x1F4DD;</div>
+            <h3 className="font-semibold mb-1">메모 기능</h3>
+            <p className="text-sm text-[var(--muted)]">각 분석에 개인 메모를 추가하여 투자 판단 근거를 기록하세요.</p>
+          </div>
+        </div>
+        <div className="text-center">
+          <Link href="/search" className="text-sm text-blue-400 hover:underline">
+            먼저 종목 분석 해보기 &rarr;
+          </Link>
+        </div>
       </div>
     );
   }

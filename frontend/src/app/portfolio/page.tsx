@@ -525,8 +525,47 @@ export default function PortfolioPage() {
     );
   }
 
-  // Server mode + not logged in -> redirect (handled by useEffect)
-  if (mode === "server" && !isAuthenticated) return null;
+  // Server mode + not logged in -> show info
+  if (mode === "server" && !isAuthenticated) {
+    return (
+      <div className="max-w-4xl mx-auto p-4 sm:p-6 space-y-8">
+        <div className="text-center py-8">
+          <h1 className="text-2xl font-bold mb-3">포트폴리오 관리</h1>
+          <p className="text-[var(--muted)] mb-6 max-w-md mx-auto">
+            보유 종목을 등록하고 AI 분석 리포트를 받아보세요. 로컬 저장 또는 서버 저장 중 선택할 수 있습니다.
+          </p>
+          <div className="flex justify-center gap-3">
+            <button
+              onClick={() => { setStorageMode("local"); setMode("local"); }}
+              className="px-6 py-2.5 rounded-lg border border-[var(--card-border)] hover:border-blue-500/50 text-sm font-medium transition-colors"
+            >
+              로컬 모드로 시작
+            </button>
+            <button
+              onClick={() => router.push("/auth/login")}
+              className="px-6 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-colors"
+            >
+              로그인하여 서버 모드 사용
+            </button>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-5">
+            <h3 className="font-semibold mb-1">종목 관리</h3>
+            <p className="text-sm text-[var(--muted)]">최대 3개 포트폴리오, 각 20종목까지 등록하고 관리할 수 있습니다.</p>
+          </div>
+          <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-5">
+            <h3 className="font-semibold mb-1">AI 분석 리포트</h3>
+            <p className="text-sm text-[var(--muted)]">포트폴리오 전체에 대한 AI 기반 종합 분석 리포트를 생성합니다.</p>
+          </div>
+          <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-5">
+            <h3 className="font-semibold mb-1">저장 방식 선택</h3>
+            <p className="text-sm text-[var(--muted)]">브라우저 로컬 저장 또는 서버 저장을 선택할 수 있습니다.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-6xl mx-auto p-4 sm:p-6 space-y-6">

@@ -129,21 +129,13 @@ async def get_batch_prices(
     market: str = Query("all", description="Market filter: KR, US, or all"),
     session: AsyncSession = Depends(get_async_session),
 ):
-    """Get live prices for the latest recommended stocks.
+    """Get prices for the latest recommended stocks.
 
-    Only fetches prices when the relevant market is open.
+    Returns live prices when market is open, closing prices when closed.
     """
     status = get_market_status()
     kr_open = status["KR"]["is_open"]
     us_open = status["US"]["is_open"]
-
-    # If no market is open, return early
-    if not kr_open and not us_open:
-        return {
-            "success": True,
-            "data": [],
-            "market_status": status,
-        }
 
     # Get latest recommended tickers from DB
     try:
@@ -161,18 +153,18 @@ async def get_batch_prices(
     )
     recs = result.scalars().all()
 
-    # Filter to only tickers whose market is currently open
+    # Fetch prices for all tickers (live when market open, closing when closed)
     tickers_to_fetch = []
     for r in recs:
         mtype = _market_to_type(r.market or "KOSPI")
         if market != "all" and mtype != market:
             continue
-        if (mtype == "KR" and kr_open) or (mtype == "US" and us_open):
-            tickers_to_fetch.append({
-                "ticker": r.ticker,
-                "market": r.market,
-                "rec_price": r.current_price,
-            })
+        tickers_to_fetch.append({
+            "ticker": r.ticker,
+            "market": r.market,
+            "rec_price": r.current_price,
+            "is_market_open": (mtype == "KR" and kr_open) or (mtype == "US" and us_open),
+        })
 
     if not tickers_to_fetch:
         return {"success": True, "data": [], "market_status": status}
@@ -200,6 +192,7 @@ async def get_batch_prices(
                 "change_from_rec": round(change_from_rec, 2),
                 "day_change_pct": price_data.get("change_pct", 0),
                 "volume": price_data.get("volume", 0),
+                "is_close_price": not item.get("is_market_open", False),
             })
         except Exception as e:
             logger.warning(f"Failed to fetch price for {item['ticker']}: {e}")

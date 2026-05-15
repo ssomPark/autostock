@@ -25,9 +25,11 @@ interface AdUnitProps {
   slot: string;
   format?: "auto" | "fluid" | "rectangle";
   className?: string;
+  /** Only render the ad when page content is ready (prevents ads on empty/loading pages) */
+  ready?: boolean;
 }
 
-export function AdUnit({ slot, format = "auto", className = "" }: AdUnitProps) {
+export function AdUnit({ slot, format = "auto", className = "", ready = true }: AdUnitProps) {
   const { isAuthenticated } = useAuth();
   const adRef = useRef<HTMLModElement>(null);
   const pushed = useRef(false);
@@ -35,7 +37,7 @@ export function AdUnit({ slot, format = "auto", className = "" }: AdUnitProps) {
   const client = process.env.NEXT_PUBLIC_ADSENSE_CLIENT;
 
   useEffect(() => {
-    if (!client || isAuthenticated || pushed.current) return;
+    if (!client || isAuthenticated || pushed.current || !ready) return;
     ensureAdsenseScript(client);
     // Wait for script to load before pushing
     const timer = setTimeout(() => {
@@ -47,10 +49,10 @@ export function AdUnit({ slot, format = "auto", className = "" }: AdUnitProps) {
       }
     }, 300);
     return () => clearTimeout(timer);
-  }, [client, isAuthenticated]);
+  }, [client, isAuthenticated, ready]);
 
-  // Don't render for logged-in users or if no client ID
-  if (!client || isAuthenticated) return null;
+  // Don't render for logged-in users, if no client ID, or if content not ready
+  if (!client || isAuthenticated || !ready) return null;
 
   return (
     <div className={className}>

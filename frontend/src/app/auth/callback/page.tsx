@@ -5,6 +5,8 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { Suspense } from "react";
 import { useAuth } from "@/lib/auth-context";
 
+// 크롤러가 이 페이지를 인덱싱하지 않도록 metadata는 layout에서 처리
+
 function CallbackInner() {
   const searchParams = useSearchParams();
   const router = useRouter();

@@ -297,8 +297,8 @@ export default function ComparePage() {
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold">종목 비교</h1>
-        <p className="text-sm text-[var(--muted)] mt-1">
-          2~4개 종목을 선택하여 기술적 분석 결과를 나란히 비교합니다
+        <p className="text-sm text-[var(--muted)] mt-1 max-w-2xl">
+          2~4개 종목을 선택하면 종합 점수, 매매 신호, 기술 지표(RSI, EMA, ATR), 캔들스틱 패턴, 차트 패턴을 나란히 비교할 수 있습니다. AI 비교 분석 리포트를 생성하면 종목 간 강점·약점을 요약해 드립니다.
         </p>
       </div>
 

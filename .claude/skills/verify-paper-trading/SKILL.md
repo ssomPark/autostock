@@ -98,7 +98,7 @@ with open('backend/src/api/routes/paper_trading.py', encoding='utf-8') as f:
 checks = [
     ('qty check', 'position.quantity < body.quantity' in content),
     ('qty error msg', '보유 수량 부족' in content or '수량 부족' in content),
-    ('delete on zero', 'quantity <= 0' in content and 'session.delete(position)' in content),
+    ('delete on zero', ('quantity <= 0' in content or 'remaining <= 0' in content) and 'session.delete(position)' in content),
     ('qty subtract', 'position.quantity -= body.quantity' in content),
 ]
 failed = [name for name, ok in checks if not ok]

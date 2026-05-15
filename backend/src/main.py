@@ -35,7 +35,11 @@ def main():
         log_level="info",
         proxy_headers=True,
         forwarded_allow_ips="*",
-        workers=4,
+        # WebSocket 인메모리 상태(active_connections, subscriptions)가 프로세스 간 공유 불가 → 단일 워커 필수.
+        # 스케일 아웃 필요 시: Redis pub/sub으로 구독 상태 공유 후 멀티 워커 전환.
+        workers=1,
+        # 메모리 누수 방지: 5000 요청마다 워커 자동 재시작
+        limit_max_requests=5000,
     )
 
 

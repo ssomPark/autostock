@@ -115,6 +115,9 @@ export default function FundamentalPage() {
       {/* Header */}
       <div>
         <h1 className="text-xl font-bold">펀더멘탈 분석</h1>
+        <p className="text-sm text-[var(--muted)] mt-1 max-w-2xl">
+          PER, PBR, ROE, 부채비율 등 핵심 재무 지표를 가치·성장·품질·밸런스 카테고리로 분류하여 종합 점수를 산출합니다. 높은 점수일수록 해당 카테고리에서 우수한 펀더멘��을 보유한 종목입니다. 재무 데이터는 공시 기반이며, 투자 판단의 참고 자료로만 활용하세요.
+        </p>
         <p className="text-sm text-[var(--muted)] mt-1">
           가치/성장/품질 기준으로 종목을 스크리닝합니다
         </p>

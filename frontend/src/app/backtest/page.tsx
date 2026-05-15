@@ -262,8 +262,8 @@ export default function BacktestPage() {
       {/* Header */}
       <div>
         <h1 className="text-xl font-bold">백테스팅</h1>
-        <p className="text-sm text-[var(--muted)] mt-1">
-          ScoringEngine 신호 기반 과거 매매 시뮬레이션
+        <p className="text-sm text-[var(--muted)] mt-1 max-w-2xl">
+          과거 주가 데이터를 기반으로 AI 매매 신호의 성과를 시뮬레이션합니다. 종목과 기간, 초기 투자금을 설정하면 수익률, 최대 낙폭(MDD), 승률 등 핵심 지표를 산출하여 전략의 유효성을 검증할 수 있습니다. 과거 성과가 미래 수익을 보장하지 않습니다.
         </p>
       </div>
 

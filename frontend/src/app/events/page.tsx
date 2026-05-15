@@ -914,18 +914,32 @@ export default function EventsPage() {
 
   if (!isAuthenticated) {
     return (
-      <div className="space-y-6">
-        <h1 className="text-2xl font-bold">이벤트 캘린더</h1>
-        <div className="flex flex-col items-center justify-center min-h-[40vh] gap-4">
-          <div className="text-6xl">&#x1F512;</div>
-          <h2 className="text-xl font-bold">로그인이 필요합니다</h2>
-          <p className="text-[var(--muted)] text-center">이벤트 캘린더를 이용하려면 로그인하세요.</p>
+      <div className="space-y-8">
+        <div className="text-center py-8">
+          <h1 className="text-2xl font-bold mb-3">이벤트 캘린더</h1>
+          <p className="text-[var(--muted)] max-w-lg mx-auto mb-6">
+            FOMC 회의, 고용 지표, 실적 발표 등 주요 경제 이벤트를 관리하고, 각 이벤트의 수혜 종목을 분석하여 사전 투자 전략을 수립하세요.
+          </p>
           <a
             href="/auth/login"
-            className="px-6 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
+            className="inline-block px-6 py-2.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
           >
-            로그인하기
+            로그인하여 시작하기
           </a>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-5">
+            <h3 className="font-semibold mb-1">경제 이벤트 추적</h3>
+            <p className="text-sm text-[var(--muted)]">정책, 실적발표, IPO, 글로벌 이벤트 등 카테고리별로 일정을 관리합니다.</p>
+          </div>
+          <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-5">
+            <h3 className="font-semibold mb-1">수혜 종목 분석</h3>
+            <p className="text-sm text-[var(--muted)]">각 이벤트가 어떤 종목에 긍정적/부정적 영향을 미칠지 분석합니다.</p>
+          </div>
+          <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-5">
+            <h3 className="font-semibold mb-1">캘린더 & 리스트</h3>
+            <p className="text-sm text-[var(--muted)]">월간 캘린더 뷰와 리스트 뷰를 전환하며 이벤트를 한눈에 파악합니다.</p>
+          </div>
         </div>
       </div>
     );
@@ -938,7 +952,7 @@ export default function EventsPage() {
         <div className="flex items-center gap-3">
           <h1 className="text-2xl font-bold">이벤트 캘린더</h1>
           <span className="text-sm text-[var(--muted)]">
-            이벤트 기반 사전 투자 전략
+            FOMC 회의, 고용 지표, 실적 발표 등 주요 경제 이벤트를 관리하고, 각 이벤트의 영향도와 수혜 종목을 분석하여 사전 투자 전략을 수립하세요.
           </span>
         </div>
         <div className="flex items-center gap-2">

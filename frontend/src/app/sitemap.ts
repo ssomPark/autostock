@@ -28,14 +28,24 @@ export default function sitemap(): MetadataRoute.Sitemap {
     { url: `${BASE_URL}/recommendations`, lastModified: now, changeFrequency: "daily", priority: 0.9 },
     { url: `${BASE_URL}/news`, lastModified: now, changeFrequency: "hourly", priority: 0.8 },
     { url: `${BASE_URL}/fundamental`, lastModified: now, changeFrequency: "daily", priority: 0.8 },
-    { url: `${BASE_URL}/community`, lastModified: now, changeFrequency: "daily", priority: 0.7 },
     { url: `${BASE_URL}/backtest`, lastModified: now, changeFrequency: "weekly", priority: 0.6 },
+    { url: `${BASE_URL}/about`, lastModified: now, changeFrequency: "monthly", priority: 0.5 },
+    { url: `${BASE_URL}/privacy`, lastModified: now, changeFrequency: "monthly", priority: 0.3 },
+    { url: `${BASE_URL}/terms`, lastModified: now, changeFrequency: "monthly", priority: 0.3 },
   ];
 
   // 인기 종목 분석 페이지
-  for (const ticker of [...POPULAR_KR, ...POPULAR_US]) {
+  for (const ticker of POPULAR_KR) {
     pages.push({
-      url: `${BASE_URL}/analysis/${ticker}`,
+      url: `${BASE_URL}/stock/${ticker}?market=KOSPI`,
+      lastModified: now,
+      changeFrequency: "daily",
+      priority: 0.7,
+    });
+  }
+  for (const ticker of POPULAR_US) {
+    pages.push({
+      url: `${BASE_URL}/stock/${ticker}?market=NASDAQ`,
       lastModified: now,
       changeFrequency: "daily",
       priority: 0.7,

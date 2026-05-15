@@ -149,7 +149,12 @@ export default function NewsPage() {
     <div className="space-y-6">
       {/* 헤더 */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <h1 className="text-2xl font-bold">경제/테크 뉴스</h1>
+        <div>
+          <h1 className="text-2xl font-bold">경제/테크 뉴스</h1>
+          <p className="text-sm text-[var(--muted)] mt-1 max-w-xl">
+            국내 경제·증권 뉴스를 실시간으로 수집하고, 자연어 처리(NLP)를 통해 호재·악재·중립으로 감성을 자동 분류합니다. 관련 종목이 함께 표시되어 뉴스가 시장에 미치는 영향을 빠르게 파악할 수 있습니다.
+          </p>
+        </div>
 
         {/* 감성 필터 */}
         <div className="flex gap-1 rounded-lg bg-[var(--card)] border border-[var(--card-border)] p-1">
@@ -279,7 +284,7 @@ export default function NewsPage() {
 
             return (
               <div key={`${article.url || ""}-${i}`}>
-                {i === 5 && <AdUnit slot="news-infeed" format="fluid" className="mb-3" />}
+                {i === 5 && <AdUnit slot="news-infeed" format="fluid" className="mb-3" ready={!isLoading && visible.length > 0} />}
                 <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4 hover:border-[var(--accent)] transition-colors">
                   {/* 제목 + 감성 태그 */}
                   <div className="flex items-start gap-2 mb-1">

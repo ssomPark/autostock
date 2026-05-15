@@ -13,6 +13,32 @@ function detectMarket(ticker: string): string {
   return /^\d{6}$/.test(ticker.trim()) ? "KOSPI" : "NASDAQ";
 }
 
+const POPULAR_STOCKS: { ticker: string; name: string; market: string }[] = [
+  { ticker: "AAPL", name: "Apple", market: "NASDAQ" },
+  { ticker: "MSFT", name: "Microsoft", market: "NASDAQ" },
+  { ticker: "NVDA", name: "NVIDIA", market: "NASDAQ" },
+  { ticker: "GOOGL", name: "Alphabet", market: "NASDAQ" },
+  { ticker: "AMZN", name: "Amazon", market: "NASDAQ" },
+  { ticker: "TSLA", name: "Tesla", market: "NASDAQ" },
+  { ticker: "META", name: "Meta", market: "NASDAQ" },
+  { ticker: "AVGO", name: "Broadcom", market: "NASDAQ" },
+  { ticker: "005930", name: "삼성전자", market: "KOSPI" },
+  { ticker: "000660", name: "SK하이닉스", market: "KOSPI" },
+  { ticker: "035420", name: "NAVER", market: "KOSPI" },
+  { ticker: "035720", name: "카카오", market: "KOSPI" },
+  { ticker: "051910", name: "LG화학", market: "KOSPI" },
+  { ticker: "005380", name: "현대차", market: "KOSPI" },
+  { ticker: "006400", name: "삼성SDI", market: "KOSPI" },
+  { ticker: "207940", name: "삼성바이오로직스", market: "KOSPI" },
+];
+
+const ANALYSIS_FEATURES: { icon: string; title: string; desc: string }[] = [
+  { icon: "📊", title: "기술적 지표 종합", desc: "RSI·EMA·ATR·피보나치 되돌림 등 핵심 지표를 자동 계산하고, A+부터 F까지 등급으로 환산합니다." },
+  { icon: "🕯️", title: "캔들·차트 패턴 자동 감지", desc: "도지·해머·엔걸핑 등 캔들 패턴과 이중천장/바닥, 플래그, 삼각형 등 차트 패턴을 스캔합니다." },
+  { icon: "📈", title: "지지/저항·거래량 분석", desc: "주요 지지·저항 가격대와 거래량 추세, OBV 신호, 이상 거래량까지 종합 평가합니다." },
+  { icon: "🤖", title: "AI 매매 신호", desc: "뉴스 감성 20% · 캔들 20% · 차트 패턴 25% · 지지/저항 20% · 거래량 15% 가중치로 매수/매도/관망을 산출합니다." },
+];
+
 function formatNumber(n: number | null | undefined): string {
   if (n == null) return "-";
   if (Math.abs(n) >= 1e12) return `${(n / 1e12).toFixed(1)}T`;
@@ -338,7 +364,12 @@ function SearchPage() {
 
   return (
     <div className="space-y-6 max-w-6xl">
-      <h1 className="text-2xl font-bold">종목 분석</h1>
+      <div>
+        <h1 className="text-2xl font-bold">종목 분석</h1>
+        <p className="text-sm text-[var(--muted)] mt-1 max-w-2xl">
+          한국·미국 주식의 기술적 분석을 자동으로 수행합니다. 캔들스틱 패턴, 차트 패턴, 지지/저항선, 거래량 분석, RSI·EMA·ATR 등 핵심 지표를 종합하여 A+~F 등급과 매수/매도/관망 신호를 산출합니다.
+        </p>
+      </div>
 
       {/* Search Bar */}
       <div className="flex gap-3">
@@ -410,9 +441,59 @@ function SearchPage() {
       )}
 
       {!ticker && !rateLimited && (
-        <div className="text-center py-20 text-[var(--muted)]">
-          <p className="text-lg">종목명 또는 코드를 입력하고 분석을 시작하세요</p>
-          <p className="text-sm mt-2">종목명 검색 (예: 한화, apple) | 숫자 6자리 → 한국 주식 | 알파벳 코드 → 미국 주식</p>
+        <div className="space-y-8 py-6">
+          <div className="text-center text-[var(--muted)]">
+            <p className="text-base">종목명 또는 코드를 입력해 분석을 시작하거나, 아래 인기 종목을 바로 분석해 보세요.</p>
+            <p className="text-xs mt-2">종목명 검색(예: 한화, apple) · 숫자 6자리 → 한국 주식 · 알파벳 코드 → 미국 주식</p>
+          </div>
+
+          <section>
+            <h2 className="text-base font-semibold mb-3">인기 종목</h2>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
+              {POPULAR_STOCKS.map((s) => (
+                <a
+                  key={s.ticker}
+                  href={`/search?ticker=${s.ticker}&market=${s.market}`}
+                  className="block bg-[var(--card)] border border-[var(--card-border)] rounded-lg px-3 py-2.5 hover:border-blue-500/40 hover:bg-blue-500/5 transition-colors"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium truncate">{s.name}</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--background)] text-[var(--muted)] shrink-0">
+                      {s.market}
+                    </span>
+                  </div>
+                  <p className="text-xs text-[var(--muted)] mt-0.5">{s.ticker}</p>
+                </a>
+              ))}
+            </div>
+          </section>
+
+          <section>
+            <h2 className="text-base font-semibold mb-3">분석 항목</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {ANALYSIS_FEATURES.map((f) => (
+                <div
+                  key={f.title}
+                  className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4 space-y-1.5"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">{f.icon}</span>
+                    <h3 className="font-medium text-sm">{f.title}</h3>
+                  </div>
+                  <p className="text-xs text-[var(--muted)] leading-relaxed">{f.desc}</p>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4 text-xs text-[var(--muted)] leading-relaxed">
+            <p>
+              <strong className="text-[var(--foreground)]">분석 흐름:</strong> 종목 검색 → 시장 자동 감지 → 캔들·차트·지지저항·거래량 신호 계산 → 가중 합산으로 매수/매도/관망 결정 → 신뢰도·등급·목표가/손절가까지 함께 제공.
+            </p>
+            <p className="mt-2">
+              비로그인 시 하루 5회까지 분석할 수 있으며, 로그인하면 무제한 분석과 분석 기록 저장이 가능합니다.
+            </p>
+          </section>
         </div>
       )}
 
@@ -562,6 +643,18 @@ function SearchPage() {
                   </div>
                 </div>
               )}
+            </div>
+          )}
+
+          {/* ====== Action buttons ====== */}
+          {sc && (
+            <div className="flex items-center gap-3 flex-wrap">
+              <a
+                href={`/stock/${ticker}?market=${market}&name=${encodeURIComponent(fin?.name || ticker)}`}
+                className="px-4 py-2 bg-blue-600/20 text-blue-400 rounded-lg text-sm font-medium hover:bg-blue-600/30 transition-colors"
+              >
+                종목 상세 페이지
+              </a>
             </div>
           )}
 
@@ -935,7 +1028,7 @@ function SearchPage() {
           )}
 
           {/* AdSense ad below analysis results — anonymous only */}
-          <AdUnit slot="search-bottom" className="mt-6" />
+          <AdUnit slot="search-bottom" className="mt-6" ready={!!sc} />
         </>
       )}
     </div>
