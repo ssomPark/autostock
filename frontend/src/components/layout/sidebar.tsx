@@ -25,7 +25,6 @@ const DEFAULT_NAV_ITEMS: NavItem[] = [
   { href: "/paper-trading", label: "모의 투자", icon: "💰", authOnly: true },
   { href: "/portfolio", label: "포트폴리오", icon: "📑", authOnly: true },
   { href: "/news", label: "뉴스", icon: "📰" },
-  { href: "/community", label: "게시판", icon: "💬" },
   { href: "/fundamental", label: "펀더멘탈", icon: "📈" },
   { href: "/backtest", label: "백테스팅", icon: "🔄", authOnly: true },
   { href: "/compare", label: "종목 비교", icon: "⚖️", authOnly: true },

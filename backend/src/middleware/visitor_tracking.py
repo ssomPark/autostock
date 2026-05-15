@@ -50,8 +50,6 @@ _PATH_PATTERNS = [
     (re.compile(r"^/api/analysis/([^/]+)/support-resistance$"), "/api/analysis/*/support-resistance"),
     (re.compile(r"^/api/analysis/([^/]+)/volume$"), "/api/analysis/*/volume"),
     (re.compile(r"^/api/analysis/([^/]+)$"), "/api/analysis/*"),
-    (re.compile(r"^/api/community/posts/\d+/comments$"), "/api/community/posts/*/comments"),
-    (re.compile(r"^/api/community/posts/\d+$"), "/api/community/posts/*"),
     (re.compile(r"^/api/events/\d+"), "/api/events/*"),
     (re.compile(r"^/api/paper/positions/\d+$"), "/api/paper/positions/*"),
     (re.compile(r"^/api/paper/trades/\d+$"), "/api/paper/trades/*"),
@@ -89,14 +87,15 @@ class VisitorTrackingMiddleware(BaseHTTPMiddleware):
             return response
 
         # Fire-and-forget Redis recording
-        ip = _get_client_ip(request)
+        # 서버 측 IP 기반 추적 (클라이언트 헤더는 신뢰하지 않음)
+        visitor_id = _get_client_ip(request)
         user_id = _extract_user_id(request)
-        asyncio.create_task(_record_visit(ip, user_id, path))
+        asyncio.create_task(_record_visit(visitor_id, user_id, path))
 
         return response
 
 
-async def _record_visit(ip: str, user_id: int | None, path: str):
+async def _record_visit(visitor_id: str, user_id: int | None, path: str):
     """Record visit data to Redis (non-blocking)."""
     try:
         from src.utils.redis_cache import _get_redis
@@ -108,18 +107,25 @@ async def _record_visit(ip: str, user_id: int | None, path: str):
 
         pipe = r.pipeline(transaction=False)
 
-        # Total unique visitors (IP-based)
+        # Total unique visitors (by visitor_id: UUID from browser or IP fallback)
         key_all = f"visitors:{date_str}:all"
-        pipe.sadd(key_all, ip)
+        pipe.sadd(key_all, visitor_id)
         pipe.expire(key_all, ttl)
 
-        # Anonymous vs logged-in
+        # Anonymous vs logged-in (mutually exclusive per visitor_id)
+        key_anon = f"visitors:{date_str}:anon"
+        key_logged = f"visitors:{date_str}:logged"
+        key_users = f"visitors:{date_str}:users"
         if user_id is None:
-            key_anon = f"visitors:{date_str}:anon"
-            pipe.sadd(key_anon, ip)
+            # Only add to anon if not already known as logged-in
+            pipe.sadd(key_anon, visitor_id)
             pipe.expire(key_anon, ttl)
         else:
-            key_users = f"visitors:{date_str}:users"
+            # Move from anon to logged-in (if they were anon before login)
+            pipe.srem(key_anon, visitor_id)
+            pipe.sadd(key_logged, visitor_id)
+            pipe.expire(key_logged, ttl)
+            # Also track unique user IDs
             pipe.sadd(key_users, str(user_id))
             pipe.expire(key_users, ttl)
 

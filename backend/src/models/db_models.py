@@ -180,8 +180,6 @@ class UserModel(Base):
     paper_accounts = relationship("PaperAccountModel", back_populates="user", cascade="all, delete-orphan")
     notifications = relationship("NotificationModel", back_populates="user", cascade="all, delete-orphan")
     portfolios = relationship("PortfolioModel", back_populates="user", cascade="all, delete-orphan")
-    community_posts = relationship("CommunityPostModel", back_populates="user", cascade="all, delete-orphan")
-    community_comments = relationship("CommunityCommentModel", back_populates="user", cascade="all, delete-orphan")
 
     __table_args__ = (
         Index("ix_users_provider_provider_id", "provider", "provider_id", unique=True),
@@ -535,50 +533,21 @@ class UpdatePostModel(Base):
     )
 
 
-class CommunityPostModel(Base):
-    """커뮤니티 게시판 글."""
-    __tablename__ = "community_posts"
+class UserFollowModel(Base):
+    """사용자 팔로우 관계."""
+    __tablename__ = "user_follows"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    title = Column(String(300), nullable=False)
-    content = Column(Text, nullable=False)
-    category = Column(String(20), nullable=False, default="discussion")  # discussion/question/tips/proof
-    view_count = Column(Integer, default=0)
-    comment_count = Column(Integer, default=0)
-    is_pinned = Column(Boolean, default=False)
-    is_deleted = Column(Boolean, default=False)
+    follower_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    following_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     created_at = Column(DateTime, default=datetime.now)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
-    user = relationship("UserModel", back_populates="community_posts")
-    comments = relationship("CommunityCommentModel", back_populates="post", cascade="all, delete-orphan")
+    follower = relationship("UserModel", foreign_keys=[follower_id])
+    following = relationship("UserModel", foreign_keys=[following_id])
 
     __table_args__ = (
-        Index("ix_community_posts_user_id", "user_id"),
-        Index("ix_community_posts_list", "is_deleted", "category", "created_at"),
-        Index("ix_community_posts_pinned", "is_deleted", "is_pinned"),
-    )
-
-
-class CommunityCommentModel(Base):
-    """커뮤니티 댓글."""
-    __tablename__ = "community_comments"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    post_id = Column(Integer, ForeignKey("community_posts.id", ondelete="CASCADE"), nullable=False)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    content = Column(Text, nullable=False)
-    is_deleted = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.now)
-    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
-
-    post = relationship("CommunityPostModel", back_populates="comments")
-    user = relationship("UserModel", back_populates="community_comments")
-
-    __table_args__ = (
-        Index("ix_community_comments_post_created", "post_id", "created_at"),
-        Index("ix_community_comments_user_id", "user_id"),
+        Index("ix_user_follows_unique", "follower_id", "following_id", unique=True),
+        Index("ix_user_follows_following", "following_id"),
     )
 
 

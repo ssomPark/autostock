@@ -11,19 +11,20 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from src.config.settings import settings
 from src.db.database import init_db, close_db
-from src.api.routes import recommendations, analysis, news, pipeline, websocket, n8n, auth, watchlist, saved_analysis, prices, paper_trading, fundamental, events, admin, notifications, portfolio, community, backtest
+from src.api.routes import recommendations, analysis, news, pipeline, websocket, n8n, auth, watchlist, saved_analysis, prices, paper_trading, fundamental, events, admin, notifications, portfolio, backtest, profile
 
 logger = logging.getLogger(__name__)
 
 
 _scheduler = None
 _order_checker = None
+_price_broadcaster = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
-    global _scheduler, _order_checker
+    global _scheduler, _order_checker, _price_broadcaster
     logger.info("Starting TradeRadar API server...")
     try:
         await init_db()
@@ -47,9 +48,22 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Order checker not started: {e}")
 
+    # Start price broadcaster (WebSocket live price updates)
+    try:
+        from src.services.price_broadcaster import PriceBroadcaster
+        _price_broadcaster = PriceBroadcaster()
+        _price_broadcaster.start()
+    except Exception as e:
+        logger.warning(f"Price broadcaster not started: {e}")
+
     yield
 
     logger.info("Shutting down TradeRadar API server...")
+    if _price_broadcaster:
+        try:
+            _price_broadcaster.stop()
+        except Exception:
+            pass
     if _order_checker:
         try:
             _order_checker.stop()
@@ -110,8 +124,8 @@ app.include_router(fundamental.router, prefix="/api/fundamental", tags=["fundame
 app.include_router(events.router, prefix="/api/events", tags=["events"])
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 app.include_router(notifications.router, prefix="/api/notifications", tags=["notifications"])
-app.include_router(community.router, prefix="/api/community", tags=["community"])
 app.include_router(backtest.router, prefix="/api/backtest", tags=["backtest"])
+app.include_router(profile.router, prefix="/api/profile", tags=["profile"])
 
 
 @app.get("/api/health")
@@ -161,7 +175,7 @@ async def get_public_navigation():
 
     default_order = [
         "/", "/search", "/my-analyses", "/recommendations",
-        "/events", "/paper-trading", "/portfolio", "/news", "/community",
+        "/events", "/paper-trading", "/portfolio", "/news",
         "/fundamental", "/backtest", "/compare", "/admin",
     ]
     try:

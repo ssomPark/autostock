@@ -6,7 +6,17 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: "*",
         allow: "/",
-        disallow: ["/api/", "/auth/callback", "/admin"],
+        disallow: [
+          "/api/",
+          "/auth/",
+          "/admin",
+          "/pipeline",
+          "/my-analyses",
+          "/paper-trading",
+          "/portfolio",
+          "/profile",
+          "/compare",
+        ],
       },
     ],
     sitemap: "https://traderadars.com/sitemap.xml",

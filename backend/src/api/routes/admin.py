@@ -122,7 +122,7 @@ async def dashboard(
         today_str = now_kst.strftime("%Y-%m-%d")
         today_total = await r.scard(f"visitors:{today_str}:all") or 0
         today_anon = await r.scard(f"visitors:{today_str}:anon") or 0
-        today_logged_in = await r.scard(f"visitors:{today_str}:users") or 0
+        today_logged_in = await r.scard(f"visitors:{today_str}:logged") or 0
         pv = int(await r.get(f"visitors:{today_str}:pv") or 0)
         visitors = {
             "today_total": today_total,
@@ -983,9 +983,6 @@ _PAGE_LABELS: dict[str, str] = {
     "/api/pipeline/status": "파이프라인 상태",
     "/api/pipeline/history": "파이프라인 이력",
     "/api/pipeline/stream": "파이프라인 스트림",
-    "/api/community/posts": "게시판 목록",
-    "/api/community/posts/*": "게시글 상세",
-    "/api/community/posts/*/comments": "댓글",
     "/api/paper/accounts": "모의투자 계좌",
     "/api/paper/accounts/*": "계좌 관리",
     "/api/paper/positions/*": "보유 포지션",
@@ -1286,6 +1283,7 @@ async def get_metrics(
     today_realtime_pv = 0
     today_realtime_visitors = 0
     today_realtime_visitors_anon = 0
+    today_realtime_visitors_logged = 0
     try:
         from src.utils.redis_cache import _get_redis as _get_redis_cache
         r_rt = await _get_redis_cache()
@@ -1293,6 +1291,7 @@ async def get_metrics(
         today_realtime_pv = int(await r_rt.get(f"visitors:{today_str_rt}:pv") or 0)
         today_realtime_visitors = await r_rt.scard(f"visitors:{today_str_rt}:all") or 0
         today_realtime_visitors_anon = await r_rt.scard(f"visitors:{today_str_rt}:anon") or 0
+        today_realtime_visitors_logged = await r_rt.scard(f"visitors:{today_str_rt}:logged") or 0
     except Exception:
         pass
 
@@ -1302,6 +1301,9 @@ async def get_metrics(
     daily = []
     for d in date_range:
         day_date = d.date() if isinstance(d, datetime) else d
+        # Convert UTC-based date back to KST for display label
+        kst_date = (d + timedelta(hours=9)) if isinstance(d, datetime) else d
+        date_label = kst_date.strftime("%m-%d") if isinstance(kst_date, datetime) else kst_date.strftime("%m-%d")
         snap = snapshot_map.get(day_date)
 
         # For today: use realtime Redis data; for past: use snapshot
@@ -1309,13 +1311,15 @@ async def get_metrics(
             pv = today_realtime_pv
             uv = today_realtime_visitors
             uv_anon = today_realtime_visitors_anon
+            uv_logged = today_realtime_visitors_logged
         else:
             pv = getattr(snap, "page_views", 0) or 0
             uv = getattr(snap, "unique_visitors", 0) or 0
             uv_anon = getattr(snap, "unique_visitors_anon", 0) or 0
+            uv_logged = uv - uv_anon  # For past snapshots, derive from total - anon
 
         daily.append({
-            "date": d.strftime("%m-%d"),
+            "date": date_label,
             "active_users": snap.active_users if snap else (dau if day_date == today_date else 0),
             "new_users": new_users_map.get(day_date, 0),
             "analysis_count": analysis_map.get(day_date, 0),
@@ -1326,6 +1330,7 @@ async def get_metrics(
             "page_views": pv,
             "unique_visitors": uv,
             "unique_visitors_anon": uv_anon,
+            "unique_visitors_logged": uv_logged,
         })
 
     # Compute avg visitors and total page views (including today's realtime)

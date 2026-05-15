@@ -77,7 +77,7 @@ function DashboardTab() {
       {/* Visitor cards */}
       {v && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <SummaryCard icon="🌐" title="오늘 방문자" value={v.today_total} sub="전체 (IP 기준)" />
+          <SummaryCard icon="🌐" title="오늘 방문자" value={v.today_total} sub="전체 (브라우저 기준)" />
           <SummaryCard icon="👤" title="비로그인" value={v.today_anon} sub={v.today_total > 0 ? `${((v.today_anon / v.today_total) * 100).toFixed(0)}%` : "0%"} />
           <SummaryCard icon="🔑" title="로그인" value={v.today_logged_in} sub={v.today_total > 0 ? `${((v.today_logged_in / v.today_total) * 100).toFixed(0)}%` : "0%"} />
           <SummaryCard icon="📄" title="페이지뷰" value={v.page_views} sub="API 요청 수" />
@@ -352,7 +352,7 @@ function MetricsTab() {
         {daily.length > 0 && (() => {
           const totalVisitors = daily.reduce((sum: number, d: any) => sum + (d.unique_visitors || 0), 0);
           const totalAnon = daily.reduce((sum: number, d: any) => sum + (d.unique_visitors_anon || 0), 0);
-          const totalLoggedIn = totalVisitors - totalAnon;
+          const totalLoggedIn = daily.reduce((sum: number, d: any) => sum + (d.unique_visitors_logged || 0), 0);
           return (
             <div className="bg-[var(--card)] border border-[var(--card-border)] rounded-lg p-4 space-y-3">
               <p className="text-sm font-medium mb-1">방문자 구성 ({period}일 합계)</p>
@@ -1473,7 +1473,6 @@ const NAV_ITEM_META: Record<string, { label: string; icon: string }> = {
   "/news": { label: "뉴스", icon: "📰" },
   "/compare": { label: "종목 비교", icon: "⚖️" },
   "/portfolio": { label: "포트폴리오", icon: "📑" },
-  "/community": { label: "게시판", icon: "💬" },
   "/fundamental": { label: "펀더멘탈", icon: "📈" },
   "/backtest": { label: "백테스팅", icon: "🔄" },
   "/admin": { label: "관리자", icon: "🛡️" },

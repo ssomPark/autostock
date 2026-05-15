@@ -41,6 +41,18 @@ export class RateLimitError extends Error {
   }
 }
 
+// --- Visitor ID (unique per browser) ---
+
+function getVisitorId(): string {
+  if (typeof window === "undefined") return "";
+  let vid = localStorage.getItem("_vid");
+  if (!vid) {
+    vid = crypto.randomUUID();
+    localStorage.setItem("_vid", vid);
+  }
+  return vid;
+}
+
 // --- Base fetch helpers ---
 
 async function fetchJSON(url: string, options?: RequestInit) {
@@ -48,6 +60,8 @@ async function fetchJSON(url: string, options?: RequestInit) {
   if (_accessToken) {
     headers["Authorization"] = `Bearer ${_accessToken}`;
   }
+  const vid = getVisitorId();
+  if (vid) headers["X-Visitor-ID"] = vid;
   const res = await fetch(`${API_BASE}${url}`, {
     headers,
     ...options,
@@ -80,6 +94,8 @@ async function fetchWithAuth(url: string, options?: RequestInit) {
   if (_accessToken) {
     headers["Authorization"] = `Bearer ${_accessToken}`;
   }
+  const vid = getVisitorId();
+  if (vid) headers["X-Visitor-ID"] = vid;
 
   let res = await fetch(`${BACKEND_URL}${url}`, {
     headers,
@@ -270,6 +286,10 @@ export function fetchAnalysis(ticker: string, market: string) {
 
 export function fetchNews(limit = 20) {
   return fetchJSON(`/news?limit=${limit}`);
+}
+
+export function fetchNewsByTicker(ticker: string, limit = 20) {
+  return fetchJSON(`/news?ticker=${encodeURIComponent(ticker)}&limit=${limit}`);
 }
 
 export function fetchPipelineStatus() {
@@ -593,6 +613,7 @@ export interface LivePrice {
   change_from_rec: number;
   day_change_pct: number;
   volume: number;
+  is_close_price?: boolean;
 }
 
 export interface MarketStatusInfo {
@@ -1102,94 +1123,36 @@ export async function fetchReportLimit(): Promise<{ remaining: number; limit: nu
   return fetchWithAuth("/api/portfolio/report-limit");
 }
 
-// --- Community API ---
+// --- Profile API ---
 
-export interface CommunityPost {
+export interface UserProfile {
   id: number;
-  user_id: number;
-  author_name: string | null;
-  author_avatar: string | null;
-  title: string;
-  content: string;
-  category: string;
-  view_count: number;
-  comment_count: number;
-  is_pinned: boolean;
+  name: string;
+  avatar_url: string | null;
   created_at: string | null;
-  updated_at: string | null;
+  follower_count: number;
+  following_count: number;
+  is_following: boolean;
 }
 
-export interface CommunityComment {
-  id: number;
-  post_id: number;
-  user_id: number;
-  author_name: string | null;
-  author_avatar: string | null;
-  content: string;
-  is_deleted: boolean;
-  created_at: string | null;
+export async function fetchProfile(userId: number): Promise<UserProfile> {
+  return fetchJSON(`/profile/${userId}`);
 }
 
-export async function fetchCommunityPosts(params?: {
-  page?: number;
-  size?: number;
-  category?: string;
-  sort_by?: string;
-}): Promise<{ posts: CommunityPost[]; total: number; page: number; size: number }> {
-  const qs = new URLSearchParams();
-  if (params?.page) qs.set("page", String(params.page));
-  if (params?.size) qs.set("size", String(params.size));
-  if (params?.category) qs.set("category", params.category);
-  if (params?.sort_by) qs.set("sort_by", params.sort_by);
-  const q = qs.toString();
-  return fetchJSON(`/community/posts${q ? `?${q}` : ""}`);
+export async function followUser(userId: number): Promise<{ following: boolean; follower_count: number }> {
+  return fetchWithAuth(`/api/profile/${userId}/follow`, { method: "PUT" });
 }
 
-export async function fetchCommunityPost(id: number): Promise<CommunityPost> {
-  return fetchJSON(`/community/posts/${id}`);
+export async function unfollowUser(userId: number): Promise<{ following: boolean; follower_count: number }> {
+  return fetchWithAuth(`/api/profile/${userId}/follow`, { method: "DELETE" });
 }
 
-export async function createCommunityPost(data: {
-  title: string;
-  content: string;
-  category: string;
-}): Promise<CommunityPost> {
-  return fetchWithAuth("/api/community/posts", {
-    method: "POST",
-    body: JSON.stringify(data),
-  });
+export async function fetchFollowers(userId: number): Promise<{ users: { id: number; name: string; avatar_url: string | null }[]; total: number }> {
+  return fetchJSON(`/profile/${userId}/followers`);
 }
 
-export async function updateCommunityPost(
-  id: number,
-  data: { title?: string; content?: string; category?: string },
-): Promise<CommunityPost> {
-  return fetchWithAuth(`/api/community/posts/${id}`, {
-    method: "PUT",
-    body: JSON.stringify(data),
-  });
-}
-
-export async function deleteCommunityPost(id: number): Promise<{ success: boolean }> {
-  return fetchWithAuth(`/api/community/posts/${id}`, { method: "DELETE" });
-}
-
-export async function fetchCommunityComments(postId: number): Promise<{ comments: CommunityComment[] }> {
-  return fetchJSON(`/community/posts/${postId}/comments`);
-}
-
-export async function createCommunityComment(
-  postId: number,
-  content: string,
-): Promise<CommunityComment> {
-  return fetchWithAuth(`/api/community/posts/${postId}/comments`, {
-    method: "POST",
-    body: JSON.stringify({ content }),
-  });
-}
-
-export async function deleteCommunityComment(commentId: number): Promise<{ success: boolean }> {
-  return fetchWithAuth(`/api/community/comments/${commentId}`, { method: "DELETE" });
+export async function fetchFollowing(userId: number): Promise<{ users: { id: number; name: string; avatar_url: string | null }[]; total: number }> {
+  return fetchJSON(`/profile/${userId}/following`);
 }
 
 export async function enrichHoldings(holdings: {

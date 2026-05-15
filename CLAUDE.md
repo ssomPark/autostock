@@ -52,7 +52,7 @@ Frontend (port 3000)  ───────────────────�
 - **`services/`**: 비즈니스 로직 (market_screener, news_service 등)
 
 ### Frontend (`frontend/src/`)
-- **`app/`**: Next.js 15 App Router 페이지들 (`/`, `/recommendations`, `/search`, `/compare`, `/news`, `/pipeline`, `/community`, `/my-analyses`, `/paper-trading`, `/portfolio`, `/events`)
+- **`app/`**: Next.js 15 App Router 페이지들 (`/`, `/recommendations`, `/search`, `/compare`, `/news`, `/pipeline`, `/my-analyses`, `/paper-trading`, `/portfolio`, `/events`)
 - **`components/`**: dashboard 위젯들 + charts (TradingView lightweight-charts)
 - **`lib/api.ts`**: Backend API 클라이언트
 - **`lib/query-provider.tsx`**: TanStack React Query 설정
@@ -81,10 +81,6 @@ News: 20% | Candlestick: 20% | ChartPattern: 25% | S/R: 20% | Volume: 15%
 | `DELETE /api/events/{id}/stocks/{stock_id}` | 수혜종목 제거 |
 | `GET /api/recommendations/sector-heatmap` | 섹터별 신호 강도 히트맵 |
 | `POST /api/analysis/compare-report` | AI 비교 분석 리포트 (인증 필요, 일 5회) |
-| `GET /api/community/posts` | 게시글 목록 (필터: category, page, limit) |
-| `POST /api/community/posts` | 게시글 작성 (인증 필요) |
-| `GET /api/community/posts/{id}` | 게시글 상세 + 댓글 |
-| `POST /api/community/posts/{id}/comments` | 댓글 작성 (인증 필요) |
 | `GET /api/notifications` | 알림 목록 (인증 필요) |
 | `POST /api/notifications/read-all` | 모든 알림 읽음 처리 |
 
@@ -107,7 +103,6 @@ News: 20% | Candlestick: 20% | ChartPattern: 25% | S/R: 20% | Volume: 15%
 | `verify-paper-trading` | 모의 투자 잔고 일관성, 매수/매도 로직, 가격 fallback, DB 모델 제약, FE-BE API 동기화 검증 |
 | `verify-portfolio` | 포트폴리오 CRUD, 리포트 rate limit(5회/일), 데이터 제한(3 포트폴리오/20 종목), 소유권 검증, 로컬/서버 모드 동기화 검증 |
 | `verify-rate-limit` | 비로그인 분석 횟수 제한(Redis rate limit), 429 응답, CORS expose_headers, FE RateLimitError/UI 검증 |
-| `verify-community` | 게시판 CRUD, 댓글 권한, 카테고리 필터, 페이지네이션, 프론트엔드 동기화 검증 |
 
 ## Environment Variables
 

@@ -75,6 +75,10 @@ async def init_db() -> None:
             # 핀(즐겨찾기) 기능
             "ALTER TABLE saved_analyses ADD COLUMN IF NOT EXISTS is_pinned BOOLEAN DEFAULT false",
             "CREATE INDEX IF NOT EXISTS ix_saved_analyses_user_pinned ON saved_analyses(user_id, is_pinned)",
+            # 커뮤니티 테이블 제거 (의존 관계 순서 주의: post_likes → community_comments → community_posts)
+            "DROP TABLE IF EXISTS post_likes CASCADE",
+            "DROP TABLE IF EXISTS community_comments CASCADE",
+            "DROP TABLE IF EXISTS community_posts CASCADE",
             # 기존 워치리스트 → is_pinned 마이그레이션
             """UPDATE saved_analyses sa
                SET is_pinned = true
